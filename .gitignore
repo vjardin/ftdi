@@ -1,0 +1,23 @@
+*.o
+*.ko
+*.ko.zst
+*.mod
+*.mod.c
+*.mod.o
+.*.cmd
+*.symvers
+*.order
+.tmp_versions/
+.cache.mk
+
+# Userspace tools
+tools/ftdi_eeprom_check
+ftdi-emulation/ftdi_usbip
+
+# Test infrastructure
+tests/.uml-build/
+tests/.rootfs/
+tests/ftdi_usbip
+tests/usbip_attach
+tests/initramfs.cpio.gz
+tests/test.log
