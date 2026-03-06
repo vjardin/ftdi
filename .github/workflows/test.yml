@@ -1,0 +1,74 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# Copyright (C) 2026 Vincent Jardin <vjardin@free.fr>, Free Mobile
+#
+# Build against latest mainline Linux kernel (UML) and run the full
+# test suite.  The kernel source is cloned to /home/runner/linux
+# (outside the workspace).
+
+name: Build & Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: UML
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      LINUX_SRC: /home/runner/linux
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential flex bison bc libelf-dev libssl-dev \
+            busybox-static cpio
+
+      - name: Compute cache key
+        id: cache-key
+        run: echo "week=$(date +%Y-W%V)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache kernel source & UML build
+        uses: actions/cache@v4
+        with:
+          path: |
+            /home/runner/linux
+            tests/.uml-build
+          key: kernel-uml-v2-${{ steps.cache-key.outputs.week }}-${{ hashFiles('tests/uml.config') }}
+          restore-keys: |
+            kernel-uml-v2-${{ steps.cache-key.outputs.week }}-
+            kernel-uml-v2-
+
+      - name: Clone Linux kernel
+        run: |
+          if [ ! -d /home/runner/linux/.git ]; then
+            git clone --depth=1 https://github.com/torvalds/linux.git \
+              /home/runner/linux
+          fi
+
+      - name: Build UML kernel
+        run: make -C tests uml-kernel LINUX_SRC=$LINUX_SRC
+
+      - name: Run core tests (SPI + I2C + UART + multi-channel)
+        run: make -C tests test-all LINUX_SRC=$LINUX_SRC
+
+      - name: Run hot-unplug test
+        run: make -C tests test-hotplug LINUX_SRC=$LINUX_SRC
+
+      - name: Run error injection tests
+        run: make -C tests test-errors LINUX_SRC=$LINUX_SRC
+
+      - name: Run suspend/resume test
+        run: make -C tests test-suspend LINUX_SRC=$LINUX_SRC
+
+      - name: Upload test logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-logs
+          path: tests/test-*.log

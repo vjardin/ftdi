@@ -1,5 +1,8 @@
 # FTDI MPSSE Driver
 
+[![Build & Test](https://github.com/vjardin/ftdi/actions/workflows/test.yml/badge.svg)](https://github.com/vjardin/ftdi/actions/workflows/test.yml)
+[![Static Analysis](https://github.com/vjardin/ftdi/actions/workflows/check.yml/badge.svg)](https://github.com/vjardin/ftdi/actions/workflows/check.yml)
+
 Out-of-tree Linux kernel driver suite for FTDI Hi-Speed USB chips
 (FT232H, FT2232H, FT4232H and variants), built as a USB interface
 driver with child platform devices for UART, SPI, I2C, and GPIO.
