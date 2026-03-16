@@ -13,7 +13,7 @@
  *   FT232H:  hardware open-drain via 0x9E (DRIVE_ZERO_ONLY)
  *   FT2232H/FT4232H: software open-drain emulation -- drive low for '0', tristate for '1'
  *
- * Command batching: one USB round-trip per I2C message (not per byte).
+ * Command batching: one USB round-trip per I2C byte (write and read).
  *
  * References: AN_108, AN_113, AN_135, i2c-dln2.c
  */
@@ -219,13 +219,19 @@ static int ftdi_i2c_write_byte_flush(struct ftdi_i2c *fi2c,
 }
 
 /*
- * Append commands for one I2C read byte to buf[pos].
- * Generates 11 CMD bytes, expects 1 RSP byte (data byte).
+ * Read one byte, send ACK/NACK, flush to USB.
+ * One USB round-trip per byte — matches write path behaviour and gives
+ * the open-drain pull-up time to settle SDA between bytes.
+ * Returns 0 on success; *data = the byte read from the slave.
  */
-static unsigned int ftdi_i2c_batch_read_byte(struct ftdi_i2c *fi2c,
-					     u8 *buf, unsigned int pos,
-					     bool ack)
+static int ftdi_i2c_read_byte_flush(struct ftdi_i2c *fi2c,
+				    u8 *buf, unsigned int *ppos,
+				    bool ack, u8 *data)
 {
+	unsigned int pos = *ppos;
+	u8 rsp;
+	int ret;
+
 	/* Release SDA for reading */
 	buf[pos++] = MPSSE_SET_BITS_LOW;
 	buf[pos++] = fi2c->sda_hi_val;
@@ -244,7 +250,14 @@ static unsigned int ftdi_i2c_batch_read_byte(struct ftdi_i2c *fi2c,
 	buf[pos++] = 0;		/* 1 bit */
 	buf[pos++] = ack ? 0x00 : 0x80;	/* ACK=0, NACK=1 (MSB) */
 
-	return pos;
+	buf[pos++] = MPSSE_SEND_IMMEDIATE;
+	ret = ftdi_mpsse_xfer(fi2c->pdev, buf, pos, &rsp, 1);
+	if (ret)
+		return ret;
+
+	*data = rsp;
+	*ppos = 0;
+	return 0;
 }
 
 static int ftdi_i2c_xfer(struct i2c_adapter *adapter,
@@ -253,7 +266,7 @@ static int ftdi_i2c_xfer(struct i2c_adapter *adapter,
 	struct ftdi_i2c *fi2c = i2c_get_adapdata(adapter);
 	u8 *buf = fi2c->buf;
 	u8 *rsp = fi2c->rsp;
-	unsigned int pos, rsp_len, rsp_idx;
+	unsigned int pos;
 	int i, j, ret;
 
 	ftdi_mpsse_bus_lock(fi2c->pdev);
@@ -283,23 +296,15 @@ static int ftdi_i2c_xfer(struct i2c_adapter *adapter,
 		}
 
 		if (msg->flags & I2C_M_RD) {
-			/* Read data — one USB round-trip */
-			pos = 0;
-			rsp_len = 0;
+			/* Read data — one USB round-trip per byte */
 			for (j = 0; j < msg->len; j++) {
 				bool last = (j == msg->len - 1);
 
-				pos = ftdi_i2c_batch_read_byte(fi2c, buf,
-							       pos, !last);
-				rsp_len++;
+				ret = ftdi_i2c_read_byte_flush(fi2c, buf,
+						&pos, !last, &msg->buf[j]);
+				if (ret)
+					goto err_stop;
 			}
-			buf[pos++] = MPSSE_SEND_IMMEDIATE;
-			ret = ftdi_mpsse_xfer(fi2c->pdev, buf, pos,
-					      rsp, rsp_len);
-			if (ret)
-				goto err_stop;
-			for (j = 0; j < msg->len; j++)
-				msg->buf[j] = rsp[j];
 		} else {
 			/* Write data — one USB round-trip per byte */
 			for (j = 0; j < msg->len; j++) {
@@ -651,7 +656,7 @@ static int ftdi_i2c_probe(struct platform_device *pdev)
 	}
 
 	speed = clamp_val(i2c_speed, 10, 3400);
-	dev_info(&pdev->dev, "FTDI MPSSE I2C adapter at %u kHz%s%s [v18-flush-per-byte]\n",
+	dev_info(&pdev->dev, "FTDI MPSSE I2C adapter at %u kHz%s%s [v19-flush-per-byte-rw]\n",
 		 speed,
 		 fi2c->open_drain_hw ? ", HW open-drain" : "",
 		 clock_stretching ? ", clock stretching" : "");
