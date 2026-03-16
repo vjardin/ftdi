@@ -118,30 +118,41 @@ static unsigned int ftdi_i2c_start(u8 *buf, unsigned int pos)
  * "reclaim" step) so that the HIGH-to-LOW SDA transition while SCL
  * is high constitutes a valid START condition.
  */
-static unsigned int ftdi_i2c_repeated_start(struct ftdi_i2c *fi2c,
-					    u8 *buf, unsigned int pos)
+/*
+ * Flush SDA release + SCL raise to USB so the pull-up has time
+ * to bring SDA high before the START condition.
+ */
+static int ftdi_i2c_repeated_start(struct ftdi_i2c *fi2c,
+				   u8 *buf, unsigned int *ppos)
 {
-	/* 1. Release SDA while SCL low */
+	unsigned int pos = 0;
+	int ret;
+
+	/* Release SDA + raise SCL — flush via USB for settle time */
 	buf[pos++] = MPSSE_SET_BITS_LOW;
 	buf[pos++] = fi2c->sda_hi_val;
 	buf[pos++] = fi2c->sda_hi_dir;
 
-	/* 2. Raise SCL while SDA high (pulled up) */
 	buf[pos++] = MPSSE_SET_BITS_LOW;
 	buf[pos++] = PIN_SCL | fi2c->sda_hi_val;
 	buf[pos++] = fi2c->sda_hi_dir;
 
-	/* 3. Pull SDA low while SCL high -- valid START */
+	ret = ftdi_mpsse_write(fi2c->pdev, buf, pos);
+	if (ret)
+		return ret;
+
+	/* Pull SDA low while SCL high — START, then SCL low */
+	pos = 0;
 	buf[pos++] = MPSSE_SET_BITS_LOW;
 	buf[pos++] = PIN_SCL;
 	buf[pos++] = PIN_SCL | PIN_SDA_OUT;
 
-	/* 4. Pull SCL low */
 	buf[pos++] = MPSSE_SET_BITS_LOW;
 	buf[pos++] = 0x00;
 	buf[pos++] = PIN_SCL | PIN_SDA_OUT;
 
-	return pos;
+	*ppos = pos;
+	return 0;
 }
 
 /*
@@ -169,29 +180,42 @@ static unsigned int ftdi_i2c_stop(struct ftdi_i2c *fi2c, u8 *buf,
  * Append commands for one I2C write byte to buf[pos].
  * Generates 11 CMD bytes, expects 1 RSP byte (ACK bit).
  */
-static unsigned int ftdi_i2c_batch_write_byte(struct ftdi_i2c *fi2c,
-					      u8 *buf, unsigned int pos,
-					      u8 byte)
+/*
+ * Write one byte, read ACK, flush to USB.
+ * One USB round-trip per byte — matches libmpsse behaviour.
+ * Returns 0 on success; *ack = 0 (ACK) or 1 (NACK).
+ */
+static int ftdi_i2c_write_byte_flush(struct ftdi_i2c *fi2c,
+				     u8 *buf, unsigned int *ppos,
+				     u8 byte, u8 *ack)
 {
-	/* Clock out 8 bits on -ve edge, MSB first */
+	unsigned int pos = *ppos;
+	u8 rsp;
+	int ret;
+
 	buf[pos++] = MPSSE_CLK_BITS_OUT_NVE;
-	buf[pos++] = 7;		/* length - 1 */
+	buf[pos++] = 7;
 	buf[pos++] = byte;
 
-	/* Release SDA for ACK, read 1 bit on +ve edge */
 	buf[pos++] = MPSSE_SET_BITS_LOW;
 	buf[pos++] = fi2c->sda_hi_val;
 	buf[pos++] = fi2c->sda_hi_dir;
 
 	buf[pos++] = MPSSE_CLK_BITS_IN_PVE;
-	buf[pos++] = 0;		/* 1 bit */
+	buf[pos++] = 0;
 
-	/* Reclaim SDA as output for next byte */
 	buf[pos++] = MPSSE_SET_BITS_LOW;
 	buf[pos++] = 0x00;
 	buf[pos++] = PIN_SCL | PIN_SDA_OUT;
 
-	return pos;
+	buf[pos++] = MPSSE_SEND_IMMEDIATE;
+	ret = ftdi_mpsse_xfer(fi2c->pdev, buf, pos, &rsp, 1);
+	if (ret)
+		return ret;
+
+	*ack = rsp & 0x01;
+	*ppos = 0;
+	return 0;
 }
 
 /*
@@ -236,92 +260,54 @@ static int ftdi_i2c_xfer(struct i2c_adapter *adapter,
 
 	for (i = 0; i < num; i++) {
 		struct i2c_msg *msg = &msgs[i];
+		u8 ack;
 
 		pos = 0;
-		rsp_len = 0;
 
-		if (i == 0)
+		if (i == 0) {
 			pos = ftdi_i2c_start(buf, pos);
-		else
-			pos = ftdi_i2c_repeated_start(fi2c, buf, pos);
-
-		if (msg->flags & I2C_M_TEN) {
-			u8 addr_hi = i2c_10bit_addr_hi_from_msg(msg);
-			u8 addr_lo = i2c_10bit_addr_lo_from_msg(msg);
-
-			/* First byte: 11110xx0 (always write) */
-			pos = ftdi_i2c_batch_write_byte(fi2c, buf, pos,
-							addr_hi & ~0x01);
-			rsp_len++;
-
-			pos = ftdi_i2c_batch_write_byte(fi2c, buf, pos,
-							addr_lo);
-			rsp_len++;
-
-			if (msg->flags & I2C_M_RD) {
-				/* Sr + 11110xx1 (read) */
-				pos = ftdi_i2c_repeated_start(fi2c, buf, pos);
-				pos = ftdi_i2c_batch_write_byte(fi2c, buf, pos,
-								addr_hi);
-				rsp_len++;
-			}
 		} else {
-			pos = ftdi_i2c_batch_write_byte(fi2c, buf, pos,
-							i2c_8bit_addr_from_msg(msg));
-			rsp_len++;
+			ret = ftdi_i2c_repeated_start(fi2c, buf, &pos);
+			if (ret)
+				goto err_stop;
 		}
 
-		if (msg->flags & I2C_M_RD) {
-			for (j = 0; j < msg->len; j++) {
-				bool ack = (j < msg->len - 1);
-
-				pos = ftdi_i2c_batch_read_byte(fi2c, buf, pos,
-							       ack);
-				rsp_len++;
-			}
-		} else {
-			for (j = 0; j < msg->len; j++) {
-				pos = ftdi_i2c_batch_write_byte(fi2c, buf, pos,
-								msg->buf[j]);
-				rsp_len++;
-			}
-		}
-
-		/* Flush -- single USB round-trip for entire message */
-		buf[pos++] = MPSSE_SEND_IMMEDIATE;
-
-		ret = ftdi_mpsse_xfer(fi2c->pdev, buf, pos, rsp, rsp_len);
+		/* Send address byte — one USB round-trip */
+		ret = ftdi_i2c_write_byte_flush(fi2c, buf, &pos,
+				i2c_8bit_addr_from_msg(msg), &ack);
 		if (ret)
 			goto err_stop;
-
-		rsp_idx = 0;
-		if (msg->flags & I2C_M_TEN) {
-			if (rsp[rsp_idx++] & 0x01) {
-				ret = -ENXIO;
-				goto err_stop;
-			}
-			if (rsp[rsp_idx++] & 0x01) {
-				ret = -ENXIO;
-				goto err_stop;
-			}
-			if ((msg->flags & I2C_M_RD) &&
-			    (rsp[rsp_idx++] & 0x01)) {
-				ret = -ENXIO;
-				goto err_stop;
-			}
-		} else {
-			if (rsp[rsp_idx++] & 0x01) {
-				ret = -ENXIO;
-				goto err_stop;
-			}
+		if (ack) {
+			ret = -ENXIO;
+			goto err_stop;
 		}
 
 		if (msg->flags & I2C_M_RD) {
-			for (j = 0; j < msg->len; j++)
-				msg->buf[j] = rsp[rsp_idx++];
-		} else {
+			/* Read data — one USB round-trip */
+			pos = 0;
+			rsp_len = 0;
 			for (j = 0; j < msg->len; j++) {
-				if (rsp[rsp_idx++] & 0x01) {
+				bool last = (j == msg->len - 1);
+
+				pos = ftdi_i2c_batch_read_byte(fi2c, buf,
+							       pos, !last);
+				rsp_len++;
+			}
+			buf[pos++] = MPSSE_SEND_IMMEDIATE;
+			ret = ftdi_mpsse_xfer(fi2c->pdev, buf, pos,
+					      rsp, rsp_len);
+			if (ret)
+				goto err_stop;
+			for (j = 0; j < msg->len; j++)
+				msg->buf[j] = rsp[j];
+		} else {
+			/* Write data — one USB round-trip per byte */
+			for (j = 0; j < msg->len; j++) {
+				ret = ftdi_i2c_write_byte_flush(fi2c, buf,
+						&pos, msg->buf[j], &ack);
+				if (ret)
+					goto err_stop;
+				if (ack) {
 					ret = -EPIPE;
 					goto err_stop;
 				}
@@ -665,7 +651,7 @@ static int ftdi_i2c_probe(struct platform_device *pdev)
 	}
 
 	speed = clamp_val(i2c_speed, 10, 3400);
-	dev_info(&pdev->dev, "FTDI MPSSE I2C adapter at %u kHz%s%s\n",
+	dev_info(&pdev->dev, "FTDI MPSSE I2C adapter at %u kHz%s%s [v18-flush-per-byte]\n",
 		 speed,
 		 fi2c->open_drain_hw ? ", HW open-drain" : "",
 		 clock_stretching ? ", clock stretching" : "");
