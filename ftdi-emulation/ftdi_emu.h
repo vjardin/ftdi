@@ -95,6 +95,7 @@ enum ftdi_error_mode {
 	FTDI_ERR_I2C_BUS_STUCK,		/* SDA stuck low (frozen bus) */
 	FTDI_ERR_USB_STALL,		/* USB endpoint stall */
 	FTDI_ERR_USB_TIMEOUT,		/* USB timeout (no response) */
+	FTDI_ERR_MPSSE_SYNC,		/* MPSSE sync: wrong echo for 0xAA */
 };
 
 /* Per-interface state */

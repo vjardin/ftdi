@@ -95,6 +95,13 @@ case "$FTDI_MODE" in
 		FTDI_ERROR="i2c-stuck"
 		FTDI_ERROR_COUNT="0"  # Infinite until recovery
 		;;
+	mpsse-sync-fail)
+		# MPSSE synchronization failure test
+		FTDI_CHIP="ft232h"
+		FTDI_PROTO="i2c"
+		FTDI_ERROR="mpsse-sync"
+		FTDI_ERROR_COUNT="0"  # Permanent
+		;;
 	spi-error)
 		# SPI/USB error injection test
 		FTDI_CHIP="ft232h"
@@ -206,11 +213,15 @@ check() {
 	fi
 }
 
-# Common tests (all modes)
-check "FTDI MPSSE core probed"  'dmesg | grep -q "FTDI MPSSE core:"'
-check "GPIO driver registered"  'dmesg | grep -q "FTDI MPSSE GPIO:"'
-check "EEPROM checksum OK"      'dmesg | grep -q "checksum=ok"'
-check "gpiochip device exists"  'ls /dev/gpiochip* >/dev/null 2>&1'
+# Common tests (skip for probe-failure tests)
+if [ "$FTDI_MODE" != "mpsse-sync-fail" ]; then
+	check "FTDI MPSSE core probed"  'dmesg | grep -q "FTDI MPSSE core:"'
+	check "GPIO driver registered"  'dmesg | grep -q "FTDI MPSSE GPIO:"'
+	check "EEPROM checksum OK"      'dmesg | grep -q "checksum=ok"'
+	check "gpiochip device exists"  'ls /dev/gpiochip* >/dev/null 2>&1'
+else
+	check "EEPROM checksum OK"      'dmesg | grep -q "checksum=ok"'
+fi
 
 # Mode-specific tests
 case "$FTDI_MODE" in
@@ -592,6 +603,16 @@ case "$FTDI_MODE" in
 			echo "ERROR: No SPI device found"
 			check "SPI error handled correctly" 'false'
 		fi
+		;;
+	mpsse-sync-fail)
+		# MPSSE synchronization failure test
+		echo "=== MPSSE Sync Failure Test ==="
+		echo "Emulator returns wrong echo for 0xAA bad command"
+		# The driver should have failed to probe due to sync error
+		check "MPSSE sync failed"          'dmesg | grep -q "MPSSE sync failed"'
+		check "No I2C adapter (probe failed)" '! ls /sys/bus/i2c/devices/i2c-* >/dev/null 2>&1'
+		check "No SPI controller"          '! ls /sys/class/spi_master/spi* >/dev/null 2>&1'
+		check "No crash/oops"              '! dmesg | grep -qi "oops\|bug\|panic"'
 		;;
 	suspend)
 		# Suspend/resume test

@@ -36,7 +36,7 @@ static void usage(const char *progname)
 		"                  Sets the EEPROM protocol hint byte at 0x1A\n"
 		"  --eeprom FILE   Load EEPROM image from binary file (256 bytes)\n"
 		"  --port PORT     TCP port to listen on (default: %d)\n"
-		"  --error TYPE    Error injection: i2c-nak, i2c-stuck, usb-stall, usb-timeout\n"
+		"  --error TYPE    Error injection: i2c-nak, i2c-stuck, usb-stall, usb-timeout, mpsse-sync\n"
 		"  --error-count N Number of errors to inject (default: 1, 0=infinite)\n"
 		"  --help          Show this help\n",
 		progname, USBIP_PORT);
@@ -52,6 +52,8 @@ static enum ftdi_error_mode parse_error_mode(const char *name)
 		return FTDI_ERR_USB_STALL;
 	if (!strcasecmp(name, "usb-timeout"))
 		return FTDI_ERR_USB_TIMEOUT;
+	if (!strcasecmp(name, "mpsse-sync"))
+		return FTDI_ERR_MPSSE_SYNC;
 	if (!strcasecmp(name, "none"))
 		return FTDI_ERR_NONE;
 

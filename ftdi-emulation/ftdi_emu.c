@@ -876,7 +876,14 @@ void ftdi_emu_bulk_out(struct ftdi_device *dev, int intf_idx,
 			/* Unknown command -- reply with bad-command marker */
 			if (st->resp_len + 2 <= (int)sizeof(st->resp_buf)) {
 				st->resp_buf[st->resp_len++] = MPSSE_BAD_CMD;
-				st->resp_buf[st->resp_len++] = cmd;
+				/*
+				 * MPSSE sync error injection: echo wrong
+				 * byte so the driver's 0xAA sync check fails.
+				 */
+				if (st->error_mode == FTDI_ERR_MPSSE_SYNC)
+					st->resp_buf[st->resp_len++] = cmd ^ 0xFF;
+				else
+					st->resp_buf[st->resp_len++] = cmd;
 			}
 			break;
 		}
