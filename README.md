@@ -926,6 +926,10 @@ with active UART signals are masked as reserved.
   - **High-speed mode (HS, 3.4 MHz)**: requires a master code byte
     (00001xxx) sent in fast mode before switching to HS clock.  The
     driver does not implement the HS-mode entry protocol.
+- I2C 10-bit addressing not supported.  The MPSSE hardware can
+  generate the required two-byte address waveform, but the driver
+  has not been validated with a 10-bit slave.  TODO: test with a
+  real 10-bit device and re-add `I2C_FUNC_10BIT_ADDR`.
 
 ## Relationship to Upstream
 

@@ -390,7 +390,12 @@ unlock:
 
 static u32 ftdi_i2c_func(struct i2c_adapter *adapter)
 {
-	return I2C_FUNC_I2C | I2C_FUNC_10BIT_ADDR | I2C_FUNC_SMBUS_EMUL;
+	/*
+	 * 10-bit addressing (I2C_FUNC_10BIT_ADDR) is not advertised:
+	 * it requires two address bytes and the driver has not been
+	 * validated with a 10-bit slave device.
+	 */
+	return I2C_FUNC_I2C | I2C_FUNC_SMBUS_EMUL;
 }
 
 static const struct i2c_algorithm ftdi_i2c_algo = {
