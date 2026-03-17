@@ -109,26 +109,35 @@ static unsigned int ftdi_i2c_idle_pins(struct ftdi_i2c *fi2c, u8 *buf,
 
 /*
  * I2C START condition: SDA goes low while SCL is high.
- * Both open-drain modes drive SDA low the same way (output, value=0),
- * so no fi2c pointer is needed.
  *
- * Each phase is repeated 4 times per AN_113/AN_255 to guarantee
- * the I2C setup/hold time (tSU;STA = 600 ns standard, 260 ns fast).
- * A single SET_BITS_LOW executes in ~17 ns at 60 MHz; 4 repetitions
- * give ~68 ns of pin-stable time plus MPSSE pipeline overhead.
+ * Per AN_113 §2.3.1, the sequence has 3 phases, each repeated 4x:
+ *   1. SDA=1, SCL=1 (idle — ensure bus is released before START)
+ *   2. SDA=0, SCL=1 (START setup — SDA falls while SCL high)
+ *   3. SDA=0, SCL=0 (hold — prepare for first data byte)
+ *
+ * The 4x repetition guarantees I2C setup/hold times
+ * (tSU;STA = 600 ns standard, 260 ns fast mode).
  */
-static unsigned int ftdi_i2c_start(u8 *buf, unsigned int pos)
+static unsigned int ftdi_i2c_start(struct ftdi_i2c *fi2c, u8 *buf,
+				   unsigned int pos)
 {
 	int i;
 
-	/* SDA low while SCL high — START setup */
+	/* Phase 1: ensure bus idle — SDA=1, SCL=1 (per AN_113) */
+	for (i = 0; i < 4; i++) {
+		buf[pos++] = MPSSE_SET_BITS_LOW;
+		buf[pos++] = PIN_SCL | fi2c->sda_hi_val;
+		buf[pos++] = fi2c->sda_hi_dir;
+	}
+
+	/* Phase 2: SDA low while SCL high — START setup */
 	for (i = 0; i < 4; i++) {
 		buf[pos++] = MPSSE_SET_BITS_LOW;
 		buf[pos++] = PIN_SCL;			/* SCL=1, SDA=0 */
 		buf[pos++] = PIN_SCL | PIN_SDA_OUT;
 	}
 
-	/* SCL low — hold START */
+	/* Phase 3: SCL low — hold START */
 	for (i = 0; i < 4; i++) {
 		buf[pos++] = MPSSE_SET_BITS_LOW;
 		buf[pos++] = 0x00;			/* SCL=0, SDA=0 */
@@ -325,7 +334,7 @@ static int ftdi_i2c_xfer(struct i2c_adapter *adapter,
 		pos = 0;
 
 		if (i == 0) {
-			pos = ftdi_i2c_start(buf, pos);
+			pos = ftdi_i2c_start(fi2c, buf, pos);
 		} else {
 			ret = ftdi_i2c_repeated_start(fi2c, buf, &pos);
 			if (ret)
