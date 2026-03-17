@@ -173,22 +173,36 @@ static struct bench_result bench_write_only(int fd, int addr, int len,
 	return r;
 }
 
-static struct bench_result bench_read_only(int fd, int addr, int len,
-					   int iterations)
+static struct bench_result bench_read_verify(int fd, int addr, int len,
+					     int iterations)
 {
 	struct bench_result r = { .iterations = iterations, .bytes_per_op = len };
+	unsigned char pattern[EEPROM_SIZE];
 	char name[64];
 	double t0;
-	int i;
+	int i, j;
 
-	snprintf(name, sizeof(name), "read-only %dB", len);
+	snprintf(name, sizeof(name), "read-verify %dB", len);
 	r.name = strdup(name);
-	t0 = now_sec();
 
+	/* Write a known pattern once */
+	for (j = 0; j < len; j++)
+		pattern[j] = (j * 3 + 0xA5) & 0xFF;
+	if (eeprom_write(fd, addr, 0, pattern, len) < 0) {
+		r.fail = iterations;
+		r.elapsed = 0;
+		return r;
+	}
+
+	t0 = now_sec();
 	for (i = 0; i < iterations; i++) {
 		unsigned char buf[EEPROM_SIZE];
 
-		if (eeprom_read(fd, addr, 0, buf, len) >= 0)
+		if (eeprom_read(fd, addr, 0, buf, len) < 0) {
+			r.fail++;
+			continue;
+		}
+		if (memcmp(buf, pattern, len) == 0)
 			r.ok++;
 		else
 			r.fail++;
@@ -261,9 +275,9 @@ int main(int argc, char *argv[])
 	results[nresults++] = bench_write_only(fd, addr, 1, iterations);
 	results[nresults++] = bench_write_only(fd, addr, 32, iterations);
 	results[nresults++] = bench_write_only(fd, addr, 256, iterations);
-	results[nresults++] = bench_read_only(fd, addr, 1, iterations);
-	results[nresults++] = bench_read_only(fd, addr, 32, iterations);
-	results[nresults++] = bench_read_only(fd, addr, 256, iterations);
+	results[nresults++] = bench_read_verify(fd, addr, 1, iterations);
+	results[nresults++] = bench_read_verify(fd, addr, 32, iterations);
+	results[nresults++] = bench_read_verify(fd, addr, 256, iterations);
 	results[nresults++] = bench_compound(fd, addr, iterations);
 
 	printf("  %-28s %9s  %12s  %10s  %7s\n",

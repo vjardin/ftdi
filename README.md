@@ -1,4 +1,4 @@
-# FTDI MPSSE Driver
+# FTDI MPSSE Kernel Driver
 
 [![Build & Test](https://github.com/vjardin/ftdi/actions/workflows/test.yml/badge.svg)](https://github.com/vjardin/ftdi/actions/workflows/test.yml)
 [![Static Analysis](https://github.com/vjardin/ftdi/actions/workflows/check.yml/badge.svg)](https://github.com/vjardin/ftdi/actions/workflows/check.yml)
@@ -6,6 +6,11 @@
 Out-of-tree Linux kernel driver suite for FTDI Hi-Speed USB chips
 (FT232H, FT2232H, FT4232H and variants), built as a USB interface
 driver with child platform devices for UART, SPI, I2C, and GPIO.
+
+Compared to userspace alternatives (libmpsse / libftdi), the kernel
+driver delivers **1.1-4.3x higher throughput** with lower latency and
+**zero verification failures** across all I2C transfer sizes at 400 kHz.
+See [`benchmarks/`](benchmarks/) for reproducible numbers and methodology.
 
 ## Architecture
 

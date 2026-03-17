@@ -35,7 +35,13 @@
 #define PIN_SDA_OUT	BIT(1)	/* AD1 -- DO */
 #define PIN_SDA_IN	BIT(2)	/* AD2 -- DI (wired to AD1) */
 
-#define FTDI_I2C_MAX_XFER_SIZE	256
+/*
+ * Maximum bytes per I2C message. With per-byte USB flush, the MPSSE
+ * command buffer usage is constant (12 bytes) regardless of message
+ * length, so there is no buffer-related limit. Set generously to
+ * support full page writes including the address/offset byte(s).
+ */
+#define FTDI_I2C_MAX_XFER_SIZE	4096
 
 static unsigned int i2c_speed = 100;
 module_param(i2c_speed, uint, 0444);
@@ -222,6 +228,13 @@ static int ftdi_i2c_write_byte_flush(struct ftdi_i2c *fi2c,
  * Read one byte, send ACK/NACK, flush to USB.
  * One USB round-trip per byte — matches write path behaviour and gives
  * the open-drain pull-up time to settle SDA between bytes.
+ *
+ * Batching multiple read bytes per USB round-trip (like libmpsse does)
+ * is faster but unreliable: the MPSSE engine transitions from ACK to
+ * the next SDA release faster than the open-drain pull-up can settle,
+ * causing bit errors on the second and subsequent bytes.  libmpsse has
+ * the same issue (~14% verification failures on 256B write+read).
+ *
  * Returns 0 on success; *data = the byte read from the slave.
  */
 static int ftdi_i2c_read_byte_flush(struct ftdi_i2c *fi2c,
@@ -656,7 +669,7 @@ static int ftdi_i2c_probe(struct platform_device *pdev)
 	}
 
 	speed = clamp_val(i2c_speed, 10, 3400);
-	dev_info(&pdev->dev, "FTDI MPSSE I2C adapter at %u kHz%s%s [v19-flush-per-byte-rw]\n",
+	dev_info(&pdev->dev, "FTDI MPSSE I2C adapter at %u kHz%s%s [v20-flush-per-byte-rw]\n",
 		 speed,
 		 fi2c->open_drain_hw ? ", HW open-drain" : "",
 		 clock_stretching ? ", clock stretching" : "");
