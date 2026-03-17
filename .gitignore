@@ -19,8 +19,15 @@ tests/.uml-build/
 tests/.rootfs/
 tests/ftdi_usbip
 tests/usbip_attach
+tests/error_test
+tests/gpio_test
+tests/hotplug_test
+tests/i2c_test
+tests/spi_test
+tests/suspend_test
+tests/uart_test
 tests/initramfs.cpio.gz
-tests/test.log
+tests/test*.log
 
 # Benchmarks (meson build artifacts)
 benchmarks/build/

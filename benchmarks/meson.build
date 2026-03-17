@@ -24,3 +24,21 @@ executable('i2c_bench_libmpsse',
   dependencies : [libmpsse_dep],
   install : false,
 )
+
+# --- raw libftdi diagnostic tools ---
+
+libftdi1 = dependency('libftdi1')
+
+executable('i2c_read_diag',
+  'i2c_read_diag.c',
+  c_args : ['-Wno-deprecated-declarations'],
+  dependencies : [libftdi1],
+  install : false,
+)
+
+executable('i2c_read_clkswitch_test',
+  'i2c_read_clkswitch_test.c',
+  c_args : ['-Wno-deprecated-declarations'],
+  dependencies : [libftdi1],
+  install : false,
+)
