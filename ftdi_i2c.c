@@ -518,7 +518,7 @@ static int ftdi_i2c_hw_init(struct ftdi_i2c *fi2c)
 	 *   freq = 60 MHz / ((1 + div) * 3)
 	 * Round up the divisor so the actual clock never exceeds the target.
 	 */
-	speed = clamp_val(i2c_speed, 10, 1000);
+	speed = clamp_val(i2c_speed, 10, 400);
 	div = DIV_ROUND_UP(60000, speed * 3) - 1;
 	buf[pos++] = MPSSE_SET_CLK_DIVISOR;
 	buf[pos++] = div & 0xff;
@@ -705,7 +705,7 @@ static int ftdi_i2c_probe(struct platform_device *pdev)
 		}
 	}
 
-	speed = clamp_val(i2c_speed, 10, 1000);
+	speed = clamp_val(i2c_speed, 10, 400);
 	dev_info(&pdev->dev, "FTDI MPSSE I2C adapter at %u kHz%s%s\n",
 		 speed,
 		 fi2c->open_drain_hw ? ", HW open-drain" : "",

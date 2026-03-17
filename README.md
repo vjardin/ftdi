@@ -919,6 +919,13 @@ with active UART signals are masked as reserved.
 - Bit-bang GPIO / UART endpoint sharing: On FT4232H channels C/D,
   bit-bang GPIO and UART share the same bulk endpoints. The bus_lock
   mutex serialises access.
+- I2C speed limited to 400 kHz (fast mode).  Higher modes are TODO:
+  - **Fast-mode plus (Fm+, 1 MHz)**: requires pull-up resistors < 1 kΩ
+    and higher bus drive current (20 mA).  The MPSSE clock divisor
+    supports it but the driver has not been validated at this speed.
+  - **High-speed mode (HS, 3.4 MHz)**: requires a master code byte
+    (00001xxx) sent in fast mode before switching to HS clock.  The
+    driver does not implement the HS-mode entry protocol.
 
 ## Relationship to Upstream
 
