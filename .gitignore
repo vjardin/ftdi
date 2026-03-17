@@ -21,3 +21,8 @@ tests/ftdi_usbip
 tests/usbip_attach
 tests/initramfs.cpio.gz
 tests/test.log
+
+# Benchmarks (meson build artifacts)
+benchmarks/build/
+benchmarks/subprojects/libmpsse/
+benchmarks/subprojects/.wraplock
