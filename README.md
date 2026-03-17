@@ -8,7 +8,7 @@ Out-of-tree Linux kernel driver suite for FTDI Hi-Speed USB chips
 driver with child platform devices for UART, SPI, I2C, and GPIO.
 
 Compared to userspace alternatives (libmpsse / libftdi), the kernel
-driver delivers **1.1-4.3x higher throughput** with lower latency and
+driver delivers **1.1-4.2x higher throughput** with lower latency and
 **zero verification failures** across all I2C transfer sizes at 400 kHz.
 See [`benchmarks/`](benchmarks/) for reproducible numbers and methodology.
 

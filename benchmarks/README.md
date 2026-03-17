@@ -26,17 +26,17 @@ FT232H at 400 kHz, RP2040 EEPROM target at 0x54, 500 iterations per test.
 
 | Test                | Kernel (ops/s) | libmpsse (ops/s) | Ratio    | Notes                              |
 |---------------------|---------------:|-----------------:|---------:|------------------------------------|
-| write+read 1B       |            969 |              281 | **3.4x** |                                    |
-| write+read 4B       |            570 |          178 (*) | **3.2x** | (*) libmpsse: 3 failures           |
-| write+read 32B      |            129 |          101 (*) | **1.3x** | (*) libmpsse: 7 failures           |
-| write+read 256B     |             18 |           15 (*) | **1.2x** | (*) libmpsse: 75 failures          |
-| write-only 1B       |           2589 |             1451 | **1.8x** |                                    |
-| write-only 32B      |            256 |              201 | **1.3x** |                                    |
-| write-only 256B     |             34 |               28 | **1.2x** |                                    |
-| read-verify 1B      |           1866 |              480 | **3.9x** |                                    |
-| read-verify 32B     |            243 |          175 (*) | **1.4x** | (*) libmpsse: 5 failures           |
-| read-verify 256B    |             35 |           45 (*) |     0.8x | (*) libmpsse: 71 failures (14.2%)  |
-| compound w+r+w+r    |            632 |              196 | **3.2x** |                                    |
+| write+read 1B       |            925 |              329 | **2.8x** |                                    |
+| write+read 4B       |            589 |          184 (*) | **3.2x** | (*) libmpsse: 2 failures           |
+| write+read 32B      |            125 |          101 (*) | **1.2x** | (*) libmpsse: 6 failures           |
+| write+read 256B     |             18 |           16 (*) | **1.1x** | (*) libmpsse: 69 failures          |
+| write-only 1B       |           2254 |             1650 | **1.4x** |                                    |
+| write-only 32B      |            257 |              202 | **1.3x** |                                    |
+| write-only 256B     |             34 |               29 | **1.2x** |                                    |
+| read-verify 1B      |           1822 |              496 | **3.7x** |                                    |
+| read-verify 32B     |            253 |          174 (*) | **1.5x** | (*) libmpsse: 4 failures           |
+| read-verify 256B    |             35 |           45 (*) |     0.8x | (*) libmpsse: 72 failures (14.4%)  |
+| compound w+r+w+r    |            807 |              194 | **4.2x** |                                    |
 
 **(\*)** libmpsse has data corruption on multi-byte reads.  The read-verify
 tests write a known pattern once, then read back and verify every iteration.
@@ -52,7 +52,7 @@ separate USB round-trip, which gives the pull-up time to settle between
 bytes.
 
 Key takeaways:
-- The kernel driver is **1.1-4.3x faster** on 10 of 11 tests, thanks to
+- The kernel driver is **1.1-4.2x faster** on 10 of 11 tests, thanks to
   lower per-transaction overhead (ioctl vs libusb round-trips).
 - libmpsse's 256B read speed comes at the cost of **data corruption**
   (~14% verification failures on write+read 256B).

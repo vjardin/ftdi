@@ -45,12 +45,19 @@
 
 static unsigned int i2c_speed = 100;
 module_param(i2c_speed, uint, 0444);
-MODULE_PARM_DESC(i2c_speed, "I2C bus speed in kHz (10-3400, default 100)");
+MODULE_PARM_DESC(i2c_speed, "I2C bus speed in kHz (10-400, default 100)");
 
+/*
+ * MPSSE adaptive clocking (0x96) monitors GPIOL3 (AD7), not the SCL
+ * line (AD0).  Per AN_255 §2.4: "the MPSSE does not automatically
+ * support clock stretching for I2C."  To use this feature, the user
+ * must wire SCL to both AD0 and GPIOL3 (AD7) externally.
+ */
 static bool clock_stretching;
 module_param(clock_stretching, bool, 0444);
 MODULE_PARM_DESC(clock_stretching,
-		 "Enable clock stretching via adaptive clocking (default 0)");
+		 "Enable adaptive clocking for I2C clock stretching "
+		 "(requires SCL wired to both AD0 and GPIOL3/AD7, default 0)");
 
 static char *i2c_bus_nr_map;
 module_param(i2c_bus_nr_map, charp, 0444);
@@ -104,16 +111,29 @@ static unsigned int ftdi_i2c_idle_pins(struct ftdi_i2c *fi2c, u8 *buf,
  * I2C START condition: SDA goes low while SCL is high.
  * Both open-drain modes drive SDA low the same way (output, value=0),
  * so no fi2c pointer is needed.
+ *
+ * Each phase is repeated 4 times per AN_113/AN_255 to guarantee
+ * the I2C setup/hold time (tSU;STA = 600 ns standard, 260 ns fast).
+ * A single SET_BITS_LOW executes in ~17 ns at 60 MHz; 4 repetitions
+ * give ~68 ns of pin-stable time plus MPSSE pipeline overhead.
  */
 static unsigned int ftdi_i2c_start(u8 *buf, unsigned int pos)
 {
-	buf[pos++] = MPSSE_SET_BITS_LOW;
-	buf[pos++] = PIN_SCL;			/* SCL=1, SDA=0 */
-	buf[pos++] = PIN_SCL | PIN_SDA_OUT;	/* both output */
+	int i;
 
-	buf[pos++] = MPSSE_SET_BITS_LOW;
-	buf[pos++] = 0x00;			/* SCL=0, SDA=0 */
-	buf[pos++] = PIN_SCL | PIN_SDA_OUT;
+	/* SDA low while SCL high — START setup */
+	for (i = 0; i < 4; i++) {
+		buf[pos++] = MPSSE_SET_BITS_LOW;
+		buf[pos++] = PIN_SCL;			/* SCL=1, SDA=0 */
+		buf[pos++] = PIN_SCL | PIN_SDA_OUT;
+	}
+
+	/* SCL low — hold START */
+	for (i = 0; i < 4; i++) {
+		buf[pos++] = MPSSE_SET_BITS_LOW;
+		buf[pos++] = 0x00;			/* SCL=0, SDA=0 */
+		buf[pos++] = PIN_SCL | PIN_SDA_OUT;
+	}
 
 	return pos;
 }
@@ -132,7 +152,7 @@ static int ftdi_i2c_repeated_start(struct ftdi_i2c *fi2c,
 				   u8 *buf, unsigned int *ppos)
 {
 	unsigned int pos = 0;
-	int ret;
+	int i, ret;
 
 	/* Release SDA + raise SCL — flush via USB for settle time */
 	buf[pos++] = MPSSE_SET_BITS_LOW;
@@ -147,15 +167,19 @@ static int ftdi_i2c_repeated_start(struct ftdi_i2c *fi2c,
 	if (ret)
 		return ret;
 
-	/* Pull SDA low while SCL high — START, then SCL low */
+	/* Pull SDA low while SCL high — START, then SCL low (4x per AN_113) */
 	pos = 0;
-	buf[pos++] = MPSSE_SET_BITS_LOW;
-	buf[pos++] = PIN_SCL;
-	buf[pos++] = PIN_SCL | PIN_SDA_OUT;
+	for (i = 0; i < 4; i++) {
+		buf[pos++] = MPSSE_SET_BITS_LOW;
+		buf[pos++] = PIN_SCL;
+		buf[pos++] = PIN_SCL | PIN_SDA_OUT;
+	}
 
-	buf[pos++] = MPSSE_SET_BITS_LOW;
-	buf[pos++] = 0x00;
-	buf[pos++] = PIN_SCL | PIN_SDA_OUT;
+	for (i = 0; i < 4; i++) {
+		buf[pos++] = MPSSE_SET_BITS_LOW;
+		buf[pos++] = 0x00;
+		buf[pos++] = PIN_SCL | PIN_SDA_OUT;
+	}
 
 	*ppos = pos;
 	return 0;
@@ -163,18 +187,28 @@ static int ftdi_i2c_repeated_start(struct ftdi_i2c *fi2c,
 
 /*
  * I2C STOP condition: SDA goes high while SCL is high.
+ * Each phase repeated 4x per AN_113/AN_255 for timing compliance.
  */
 static unsigned int ftdi_i2c_stop(struct ftdi_i2c *fi2c, u8 *buf,
 				  unsigned int pos)
 {
-	buf[pos++] = MPSSE_SET_BITS_LOW;
-	buf[pos++] = 0x00;
-	buf[pos++] = PIN_SCL | PIN_SDA_OUT;
+	int i;
 
-	buf[pos++] = MPSSE_SET_BITS_LOW;
-	buf[pos++] = PIN_SCL;
-	buf[pos++] = PIN_SCL | PIN_SDA_OUT;
+	/* SDA low, SCL low — setup */
+	for (i = 0; i < 4; i++) {
+		buf[pos++] = MPSSE_SET_BITS_LOW;
+		buf[pos++] = 0x00;
+		buf[pos++] = PIN_SCL | PIN_SDA_OUT;
+	}
 
+	/* SCL high, SDA still low — STOP setup */
+	for (i = 0; i < 4; i++) {
+		buf[pos++] = MPSSE_SET_BITS_LOW;
+		buf[pos++] = PIN_SCL;
+		buf[pos++] = PIN_SCL | PIN_SDA_OUT;
+	}
+
+	/* SDA high while SCL high — STOP, then idle */
 	buf[pos++] = MPSSE_SET_BITS_LOW;
 	buf[pos++] = PIN_SCL | fi2c->sda_hi_val;
 	buf[pos++] = fi2c->sda_hi_dir;
@@ -472,7 +506,10 @@ static int ftdi_i2c_hw_init(struct ftdi_i2c *fi2c)
 	/* Enable 3-phase data clocking (required for I2C) */
 	buf[pos++] = MPSSE_ENABLE_3PHASE;
 
-	/* Adaptive clocking for clock stretching (requires AD3 -> SCL) */
+	/*
+	 * Adaptive clocking for clock stretching.  Monitors GPIOL3 (AD7),
+	 * not SCL (AD0) — requires external wiring of SCL to AD7.
+	 */
 	buf[pos++] = clock_stretching ? MPSSE_ENABLE_ADAPTIVE
 				      : MPSSE_DISABLE_ADAPTIVE;
 
@@ -481,7 +518,7 @@ static int ftdi_i2c_hw_init(struct ftdi_i2c *fi2c)
 	 *   freq = 60 MHz / ((1 + div) * 3)
 	 * Round up the divisor so the actual clock never exceeds the target.
 	 */
-	speed = clamp_val(i2c_speed, 10, 3400);
+	speed = clamp_val(i2c_speed, 10, 1000);
 	div = DIV_ROUND_UP(60000, speed * 3) - 1;
 	buf[pos++] = MPSSE_SET_CLK_DIVISOR;
 	buf[pos++] = div & 0xff;
@@ -489,10 +526,10 @@ static int ftdi_i2c_hw_init(struct ftdi_i2c *fi2c)
 
 	buf[pos++] = MPSSE_LOOPBACK_OFF;
 
-	/* Hardware open-drain (FT232H only): low-byte SCL + SDA */
+	/* Hardware open-drain (FT232H only): low-byte SCL + SDA out + SDA in */
 	if (fi2c->open_drain_hw) {
 		buf[pos++] = MPSSE_DRIVE_ZERO_ONLY;
-		buf[pos++] = PIN_SCL | PIN_SDA_OUT;	/* low byte mask */
+		buf[pos++] = PIN_SCL | PIN_SDA_OUT | PIN_SDA_IN; /* 0x07 per AN_255 */
 		buf[pos++] = 0x00;			/* high byte mask */
 	}
 
@@ -668,11 +705,11 @@ static int ftdi_i2c_probe(struct platform_device *pdev)
 		}
 	}
 
-	speed = clamp_val(i2c_speed, 10, 3400);
-	dev_info(&pdev->dev, "FTDI MPSSE I2C adapter at %u kHz%s%s [v20-flush-per-byte-rw]\n",
+	speed = clamp_val(i2c_speed, 10, 1000);
+	dev_info(&pdev->dev, "FTDI MPSSE I2C adapter at %u kHz%s%s\n",
 		 speed,
 		 fi2c->open_drain_hw ? ", HW open-drain" : "",
-		 clock_stretching ? ", clock stretching" : "");
+		 clock_stretching ? ", clock stretching (AD7)" : "");
 
 	return 0;
 }
