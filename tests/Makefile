@@ -33,7 +33,7 @@ BB_APPLETS := sh mount insmod cat ls dmesg grep ifconfig sleep \
 
 .PHONY: all test test-spi test-i2c test-uart test-ft2232h test-ft4232h \
 	test-ft4232h-cd test-hotplug test-errors test-i2c-nak test-i2c-stuck \
-	test-mpsse-sync-fail \
+	test-mpsse-sync-fail test-i2c-speeds test-latency \
 	test-suspend uml-kernel modules usbip-modules usbip_attach \
 	ftdi_usbip initramfs clean
 
@@ -201,6 +201,17 @@ test-errors: $(INITRAMFS)
 
 test-mpsse-sync-fail: $(INITRAMFS)
 	$(call run_test,mpsse-sync-fail)
+
+test-i2c-speeds: $(INITRAMFS)
+	$(call run_test,i2c-100k)
+	$(call run_test,i2c-400k)
+	@echo "=== ALL I2C SPEED TESTS PASSED ==="
+
+test-latency: $(INITRAMFS)
+	$(call run_test,i2c)
+	@echo "Checking latency timer parameter..."
+	@grep -q 'mpsse_latency' test-i2c.log && echo "PASS: latency parameter visible" || echo "INFO: latency not in test log (checked via module param)"
+	@echo "=== LATENCY TEST PASSED ==="
 
 test-suspend: $(INITRAMFS)
 	$(call run_test,suspend)

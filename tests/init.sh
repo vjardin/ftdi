@@ -76,6 +76,16 @@ case "$FTDI_MODE" in
 		FTDI_CHIP="ft232h"
 		FTDI_PROTO="$FTDI_MODE"
 		;;
+	i2c-100k)
+		FTDI_CHIP="ft232h"
+		FTDI_PROTO="i2c"
+		I2C_ARGS="i2c_speed=100"
+		;;
+	i2c-400k)
+		FTDI_CHIP="ft232h"
+		FTDI_PROTO="i2c"
+		I2C_ARGS="i2c_speed=400"
+		;;
 	hotplug)
 		# Hot-unplug test uses SPI mode for MPSSE operations
 		FTDI_CHIP="ft232h"
@@ -162,7 +172,7 @@ esac
 insmod /lib/modules/ftdi_mpsse.ko $MPSSE_ARGS
 insmod /lib/modules/ftdi_uart.ko
 insmod /lib/modules/ftdi_spi.ko
-insmod /lib/modules/ftdi_i2c.ko
+insmod /lib/modules/ftdi_i2c.ko ${I2C_ARGS:-}
 insmod /lib/modules/ftdi_gpio.ko
 insmod /lib/modules/ftdi_gpio_bitbang.ko 2>/dev/null || true
 sleep 1
@@ -292,6 +302,22 @@ case "$FTDI_MODE" in
 			check "GPIO read/write test"  'false'
 		fi
 		check "No SPI controller (I2C mode)" '! ls /sys/class/spi_master/spi* >/dev/null 2>&1'
+		;;
+	i2c-100k|i2c-400k)
+		# I2C speed-specific tests
+		SPEED_KHZ=$(echo "$FTDI_MODE" | sed 's/i2c-\([0-9]*\)k/\1/')
+		check "I2C adapter registered"    'dmesg | grep -q "FTDI MPSSE I2C adapter"'
+		check "I2C speed $SPEED_KHZ kHz"  "dmesg | grep -q '${SPEED_KHZ} kHz'"
+		check "i2c-dev device exists"     'ls /dev/i2c-* >/dev/null 2>&1'
+		# Run I2C I/O test
+		I2C_DEV=$(ls /dev/i2c-* 2>/dev/null | head -1)
+		if [ -n "$I2C_DEV" ]; then
+			/usr/bin/i2c_test "$I2C_DEV" > /tmp/i2c_test.log 2>&1
+			check "I2C read/write at $SPEED_KHZ kHz" 'grep -q "All I2C tests PASSED" /tmp/i2c_test.log'
+			cat /tmp/i2c_test.log
+		else
+			check "I2C read/write at $SPEED_KHZ kHz" 'false'
+		fi
 		;;
 	uart)
 		check "UART mode detected"        'dmesg | grep -q "EEPROM hints UART mode"'
