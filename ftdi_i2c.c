@@ -391,11 +391,12 @@ unlock:
 static u32 ftdi_i2c_func(struct i2c_adapter *adapter)
 {
 	/*
-	 * 10-bit addressing (I2C_FUNC_10BIT_ADDR) is not advertised:
-	 * it requires two address bytes and the driver has not been
-	 * validated with a 10-bit slave device.
+	 * 10-bit addressing: the MPSSE can generate the two-byte address
+	 * waveform and the Linux I2C core decomposes 10-bit transactions
+	 * into proper message sequences.  Not yet validated with a real
+	 * 10-bit slave (Zephyr DW I2C target needs a patch for 10-bit).
 	 */
-	return I2C_FUNC_I2C | I2C_FUNC_SMBUS_EMUL;
+	return I2C_FUNC_I2C | I2C_FUNC_10BIT_ADDR | I2C_FUNC_SMBUS_EMUL;
 }
 
 static const struct i2c_algorithm ftdi_i2c_algo = {
