@@ -842,6 +842,57 @@ static int ftdi_mpsse_enter_mpsse(struct ftdi_mpsse_dev *fdev)
 	if (ret < 0)
 		dev_warn(&fdev->intf->dev, "purge TX failed: %d\n", ret);
 
+	/*
+	 * MPSSE synchronization per AN_113 §2.3.2 and AN_255 §2.2.3.
+	 * Send an invalid command (0xAA), verify the MPSSE echoes back
+	 * 0xFA (bad command indicator) followed by 0xAA.  This confirms
+	 * the MPSSE engine is responsive and the command pipeline is
+	 * synchronized.
+	 *
+	 * Use raw usb_bulk_msg rather than ftdi_mpsse_bulk_read because
+	 * the latter's bad-command check would reject the 0xFA response.
+	 */
+	{
+		unsigned int pipe_out = usb_sndbulkpipe(fdev->udev,
+				fdev->ep_bulk_out->bEndpointAddress);
+		unsigned int pipe_in = usb_rcvbulkpipe(fdev->udev,
+				fdev->ep_bulk_in->bEndpointAddress);
+		u8 sync_cmd[2] = { 0xAA, MPSSE_SEND_IMMEDIATE };
+		int actual = 0;
+		int retries;
+
+		ret = usb_bulk_msg(fdev->udev, pipe_out, sync_cmd,
+				   sizeof(sync_cmd), &actual, 1000);
+		if (ret) {
+			dev_err(&fdev->intf->dev,
+				"MPSSE sync write failed: %d\n", ret);
+			return ret;
+		}
+
+		/* Read response: skip status-only packets, find FA AA */
+		for (retries = 0; retries < 10; retries++) {
+			actual = 0;
+			ret = usb_bulk_msg(fdev->udev, pipe_in,
+					   fdev->bulk_buf, 64,
+					   &actual, 1000);
+			if (ret || actual < FTDI_MPSSE_STATUS_BYTES)
+				continue;
+			if (actual > FTDI_MPSSE_STATUS_BYTES)
+				break; /* got payload */
+		}
+
+		if (actual >= FTDI_MPSSE_STATUS_BYTES + 2 &&
+		    fdev->bulk_buf[FTDI_MPSSE_STATUS_BYTES] == MPSSE_CMD_BAD &&
+		    fdev->bulk_buf[FTDI_MPSSE_STATUS_BYTES + 1] == 0xAA) {
+			dev_dbg(&fdev->intf->dev, "MPSSE sync OK\n");
+		} else {
+			dev_err(&fdev->intf->dev,
+				"MPSSE sync failed: expected FA AA, got %d bytes\n",
+				actual);
+			return -EPROTO;
+		}
+	}
+
 	return 0;
 }
 
