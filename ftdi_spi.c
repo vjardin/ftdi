@@ -230,6 +230,17 @@ static int ftdi_spi_setup(struct spi_device *spi)
 	if (cs >= FTDI_SPI_MAX_CS)
 		return -EINVAL;
 
+	/*
+	 * AN_114 §1.2: "FTDI device can only support mode 0 and mode 2
+	 * due to the limitation of MPSSE engine."  Modes 1 and 3 work
+	 * for most slaves by using the complementary edge opcode pairing,
+	 * but are not guaranteed to meet timing for all devices.
+	 */
+	if (spi->mode & SPI_CPHA)
+		dev_notice(&spi->dev,
+			   "SPI mode %u uses CPHA=1; only modes 0 and 2 are fully supported by MPSSE (AN_114)\n",
+			   spi->mode & SPI_MODE_X_MASK);
+
 	if (spi->mode & SPI_CS_HIGH)
 		fspi->cs_active_high |= BIT(cs);
 	else
