@@ -138,6 +138,37 @@ int main(int argc, char *argv[])
 	printf("PASS (xfer %d bytes, rx: %02x %02x %02x %02x)\n",
 	       ret, rx_buf[0], rx_buf[1], rx_buf[2], rx_buf[3]);
 
+	/*
+	 * Test 5: SPI mode 1 (CPHA=1) — verify transfer works and
+	 * the driver emits a dev_notice per AN_114 §1.2.
+	 */
+	printf("Test 5: SPI mode 1 (CPHA=1, AN_114 warning)... ");
+	mode = SPI_MODE_1;
+	if (ioctl(fd, SPI_IOC_WR_MODE, &mode) < 0) {
+		fprintf(stderr, "FAIL: SPI_IOC_WR_MODE(1) failed: %s\n",
+			strerror(errno));
+		close(fd);
+		return 1;
+	}
+
+	memset(&xfer, 0, sizeof(xfer));
+	xfer.tx_buf = (unsigned long)tx_buf;
+	xfer.rx_buf = (unsigned long)rx_buf;
+	xfer.len = TEST_PATTERN_LEN;
+	xfer.speed_hz = speed;
+	xfer.bits_per_word = bits;
+
+	memset(rx_buf, 0, sizeof(rx_buf));
+	ret = ioctl(fd, SPI_IOC_MESSAGE(1), &xfer);
+	if (ret < 0) {
+		fprintf(stderr, "FAIL: SPI mode 1 transfer: %s\n",
+			strerror(errno));
+		close(fd);
+		return 1;
+	}
+	printf("PASS (mode 1 xfer OK, rx: %02x %02x %02x %02x)\n",
+	       rx_buf[0], rx_buf[1], rx_buf[2], rx_buf[3]);
+
 	close(fd);
 	printf("All SPI tests PASSED\n");
 	return 0;

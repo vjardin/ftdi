@@ -246,6 +246,8 @@ case "$FTDI_MODE" in
 		if [ -n "$SPI_DEV" ]; then
 			/usr/bin/spi_test "$SPI_DEV" > /tmp/spi_test.log 2>&1
 			check "SPI read/write test"   'grep -q "All SPI tests PASSED" /tmp/spi_test.log'
+			check "SPI mode 1 test"       'grep -q "mode 1 xfer OK" /tmp/spi_test.log'
+			check "SPI mode 1 AN_114 notice" 'dmesg | grep -q "CPHA=1.*AN_114"'
 			cat /tmp/spi_test.log
 		else
 			check "SPI read/write test"   'false'
