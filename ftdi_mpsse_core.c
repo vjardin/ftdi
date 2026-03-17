@@ -124,13 +124,22 @@ MODULE_PARM_DESC(spi_cs,
 		 " Per-channel: 'A:3,4,5;B:3' for different configs."
 		 " Remaining ADBUS pins available as GPIO.");
 
-/* Module parameter: MPSSE latency timer (ms) */
-static unsigned int mpsse_latency = 1;
+/*
+ * Module parameter: MPSSE latency timer (ms).
+ *
+ * Per AN_255 §2.2.2: use 16 ms (the chip default) when SEND_IMMEDIATE
+ * (0x87) is used to flush responses.  All MPSSE child drivers (I2C,
+ * SPI) append SEND_IMMEDIATE after commands that expect a response,
+ * so the latency timer only fires for idle status packets.  A low
+ * value (1 ms) causes unnecessary USB traffic — empty status packets
+ * every millisecond even when no data is pending.
+ */
+static unsigned int mpsse_latency = 16;
 module_param(mpsse_latency, uint, 0644);
 MODULE_PARM_DESC(mpsse_latency,
-		 "MPSSE mode USB latency timer in ms (1-255, default 1)."
-		 " Higher values reduce USB overhead but increase I/O latency."
-		 " Legacy compat: mpsse_latency=40");
+		 "MPSSE mode USB latency timer in ms (1-255, default 16)."
+		 " SEND_IMMEDIATE provides fast response; the timer only"
+		 " affects idle status packet rate (per AN_255).");
 
 /* Module parameter: USB autosuspend control */
 static bool autosuspend;
