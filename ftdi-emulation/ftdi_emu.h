@@ -96,6 +96,7 @@ enum ftdi_error_mode {
 	FTDI_ERR_USB_STALL,		/* USB endpoint stall */
 	FTDI_ERR_USB_TIMEOUT,		/* USB timeout (no response) */
 	FTDI_ERR_MPSSE_SYNC,		/* MPSSE sync: wrong echo for 0xAA */
+	FTDI_ERR_I2C_CLK_STRETCH,	/* I2C clock stretch: SCL held low */
 };
 
 /* Per-interface state */
@@ -121,6 +122,7 @@ struct ftdi_intf_state {
 	enum ftdi_error_mode error_mode;
 	int      error_count;		/* Remaining errors to inject (0 = infinite) */
 	int      i2c_byte_count;	/* Track I2C bytes for targeted NAK */
+	int      clk_stretch_left;	/* GET_BITS_LOW calls to return SCL=0 */
 
 	/* Per-interface bulk-IN response accumulator */
 	uint8_t  resp_buf[512];

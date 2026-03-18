@@ -54,6 +54,8 @@ static enum ftdi_error_mode parse_error_mode(const char *name)
 		return FTDI_ERR_USB_TIMEOUT;
 	if (!strcasecmp(name, "mpsse-sync"))
 		return FTDI_ERR_MPSSE_SYNC;
+	if (!strcasecmp(name, "i2c-stretch"))
+		return FTDI_ERR_I2C_CLK_STRETCH;
 	if (!strcasecmp(name, "none"))
 		return FTDI_ERR_NONE;
 

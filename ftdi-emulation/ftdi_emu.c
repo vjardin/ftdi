@@ -714,6 +714,20 @@ void ftdi_emu_bulk_out(struct ftdi_device *dev, int intf_idx,
 					/* AD1 (SDA_OUT) and AD2 (SDA_IN) stuck low */
 					val &= ~0x06;
 				}
+
+				/*
+				 * Clock stretching simulation: SCL (AD0) held low
+				 * for N GET_BITS_LOW calls, then released.
+				 */
+				if (st->error_mode == FTDI_ERR_I2C_CLK_STRETCH) {
+					if (st->clk_stretch_left == 0)
+						st->clk_stretch_left = 5; /* stretch for 5 polls */
+					if (st->clk_stretch_left > 0) {
+						val &= ~0x01; /* SCL low */
+						st->clk_stretch_left--;
+					}
+				}
+
 				st->resp_buf[st->resp_len++] = val;
 			}
 			break;

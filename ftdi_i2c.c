@@ -35,6 +35,10 @@
 #define PIN_SDA_OUT	BIT(1)	/* AD1 -- DO */
 #define PIN_SDA_IN	BIT(2)	/* AD2 -- DI (wired to AD1) */
 
+/* Forward declarations for bus recovery / clock stretching */
+static int ftdi_i2c_get_scl(struct i2c_adapter *adap);
+static int ftdi_i2c_get_sda(struct i2c_adapter *adap);
+
 /*
  * Maximum bytes per I2C message. With per-byte USB flush, the MPSSE
  * command buffer usage is constant (12 bytes) regardless of message
@@ -394,14 +398,37 @@ err_stop:
 	ftdi_mpsse_write(fi2c->pdev, buf, pos);
 
 	/*
-	 * If the transfer failed, a slave may be holding SDA low
-	 * (e.g. interrupted mid-byte).  Attempt bus recovery: toggle
-	 * SCL up to 9 times until the slave releases SDA, then send
-	 * STOP.  The bus_lock is released first because
-	 * i2c_recover_bus() re-acquires it via prepare_recovery().
+	 * If the transfer failed, the slave may be clock-stretching
+	 * (holding SCL low) or holding SDA low (stuck bus).
+	 *
+	 * The MPSSE does not natively detect I2C clock stretching
+	 * (AN_255 §2.4).  Poll SCL via GET_BITS_LOW to give the slave
+	 * time to finish processing before attempting recovery.
+	 *
+	 * If SCL is free but SDA is stuck, do full bus recovery:
+	 * toggle SCL up to 9 times until the slave releases SDA.
+	 *
+	 * The bus_lock is released first because i2c_recover_bus()
+	 * re-acquires it via prepare_recovery().
 	 */
 	ftdi_mpsse_bus_unlock(fi2c->pdev);
-	i2c_recover_bus(adapter);
+
+	/* Wait for clock stretching to complete (up to 100 ms) */
+	{
+		int timeout = 100;
+
+		while (ftdi_i2c_get_scl(adapter) == 0 && timeout-- > 0)
+			usleep_range(1000, 2000);
+		if (timeout <= 0)
+			dev_warn(&adapter->dev,
+				 "SCL stuck low after %d ms (clock stretching timeout)\n",
+				 100);
+	}
+
+	/* If SDA is stuck low, do full 9-clock recovery */
+	if (ftdi_i2c_get_sda(adapter) == 0)
+		i2c_recover_bus(adapter);
+
 	return ret;
 
 unlock:

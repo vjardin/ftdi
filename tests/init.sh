@@ -105,6 +105,13 @@ case "$FTDI_MODE" in
 		FTDI_ERROR="i2c-stuck"
 		FTDI_ERROR_COUNT="0"  # Infinite until recovery
 		;;
+	i2c-stretch)
+		# I2C clock stretching simulation test
+		FTDI_CHIP="ft232h"
+		FTDI_PROTO="i2c"
+		FTDI_ERROR="i2c-stretch"
+		FTDI_ERROR_COUNT="1"
+		;;
 	mpsse-sync-fail)
 		# MPSSE synchronization failure test
 		FTDI_CHIP="ft232h"
@@ -609,6 +616,31 @@ case "$FTDI_MODE" in
 		else
 			echo "ERROR: No I2C device found"
 			check "I2C bus stuck handled" 'false'
+		fi
+		;;
+	i2c-stretch)
+		# I2C clock stretching test
+		# The emulator returns SCL=0 for 5 GET_BITS_LOW polls, then releases.
+		# The driver should wait for SCL to go high, then proceed.
+		check "I2C mode detected"         'dmesg | grep -q "EEPROM hints I2C mode"'
+		check "I2C adapter registered"    'dmesg | grep -q "FTDI MPSSE I2C adapter"'
+		check "I2C adapter exists"        'ls /sys/bus/i2c/devices/i2c-* >/dev/null 2>&1'
+
+		echo "=== I2C Clock Stretching Test ==="
+		echo "Emulator will simulate SCL held low for 5 polls"
+
+		I2C_DEV=$(ls /dev/i2c-* 2>/dev/null | head -1)
+		if [ -n "$I2C_DEV" ]; then
+			/usr/bin/i2c_test "$I2C_DEV" > /tmp/i2c_test.log 2>&1
+			cat /tmp/i2c_test.log
+			# The driver should not crash or hang regardless of stretching
+			check "Driver did not crash" '! dmesg | grep -qi "oops\|bug\|panic"'
+			# Transfers should succeed: the emulator releases SCL
+			# after 5 polls, the driver's wait loop handles it
+			check "I2C tests passed despite stretch" \
+				'grep -q "All I2C tests PASSED" /tmp/i2c_test.log'
+		else
+			check "I2C device found" 'false'
 		fi
 		;;
 	spi-error)
