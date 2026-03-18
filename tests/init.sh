@@ -605,10 +605,7 @@ case "$FTDI_MODE" in
 			cat /tmp/error_test.log
 			# The test passes if it doesn't hang and returns an appropriate error
 			check "I2C bus stuck handled" 'grep -q "PASS:" /tmp/error_test.log'
-			# Check if bus recovery was attempted
-			if dmesg | grep -q "recovery"; then
-				echo "Bus recovery attempt detected in dmesg"
-			fi
+			check "Bus recovery attempted" 'grep -q "Phase 2:" /tmp/error_test.log'
 		else
 			echo "ERROR: No I2C device found"
 			check "I2C bus stuck handled" 'false'

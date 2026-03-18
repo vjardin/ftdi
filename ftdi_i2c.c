@@ -392,6 +392,18 @@ err_stop:
 	pos = 0;
 	pos = ftdi_i2c_stop(fi2c, buf, pos);
 	ftdi_mpsse_write(fi2c->pdev, buf, pos);
+
+	/*
+	 * If the transfer failed, a slave may be holding SDA low
+	 * (e.g. interrupted mid-byte).  Attempt bus recovery: toggle
+	 * SCL up to 9 times until the slave releases SDA, then send
+	 * STOP.  The bus_lock is released first because
+	 * i2c_recover_bus() re-acquires it via prepare_recovery().
+	 */
+	ftdi_mpsse_bus_unlock(fi2c->pdev);
+	i2c_recover_bus(adapter);
+	return ret;
+
 unlock:
 	ftdi_mpsse_bus_unlock(fi2c->pdev);
 	return ret;
