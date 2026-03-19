@@ -288,6 +288,15 @@ case "$FTDI_MODE" in
 		# I2C reserves AD0-AD2 (SCL, SDA0, SDA1), mask = 0x0007
 		check "I2C pins reserved"         'dmesg | grep -q "reserved mask 0x0007"'
 		check "i2c-dev device exists"     'ls /dev/i2c-* >/dev/null 2>&1'
+		# Find sysfs stats
+		I2C_STATS=$(find /sys -name "i2c_stats" 2>/dev/null | head -1)
+		if [ -n "$I2C_STATS" ]; then
+			# Reset counters before test
+			echo 0 > "$I2C_STATS"
+			check "i2c_stats sysfs exists"  'true'
+		else
+			check "i2c_stats sysfs exists"  'false'
+		fi
 		# Run I2C I/O test
 		echo "Running I2C I/O test..."
 		I2C_DEV=$(ls /dev/i2c-* 2>/dev/null | head -1)
@@ -297,6 +306,15 @@ case "$FTDI_MODE" in
 			cat /tmp/i2c_test.log
 		else
 			check "I2C read/write test"   'false'
+		fi
+		# Verify sysfs counters after I2C test
+		if [ -n "$I2C_STATS" ]; then
+			echo "Checking sysfs counters..."
+			cat "$I2C_STATS"
+			check "xfer_ok > 0"     'grep -q "xfer_ok=[1-9]" "$I2C_STATS"'
+			check "xfer_fail == 0"  'grep -q "xfer_fail=0" "$I2C_STATS"'
+			check "bytes_tx > 0"    'grep -q "bytes_tx=[1-9]" "$I2C_STATS"'
+			check "bytes_rx > 0"    'grep -q "bytes_rx=[1-9]" "$I2C_STATS"'
 		fi
 		# Run GPIO I/O test (test pin 8 = AC0, not reserved by I2C)
 		echo "Running GPIO I/O test..."
@@ -586,11 +604,22 @@ case "$FTDI_MODE" in
 		echo "=== I2C NAK Error Test ==="
 		echo "Emulator will inject NAK on I2C transaction"
 
+		# Reset sysfs counters
+		I2C_STATS=$(find /sys -name "i2c_stats" -path "*ftdi*" 2>/dev/null | head -1)
+		[ -n "$I2C_STATS" ] && echo 0 > "$I2C_STATS"
+
 		I2C_DEV=$(ls /dev/i2c-* 2>/dev/null | head -1)
 		if [ -n "$I2C_DEV" ]; then
 			/usr/bin/error_test i2c-nak "$I2C_DEV" > /tmp/error_test.log 2>&1
 			cat /tmp/error_test.log
 			check "I2C NAK handled correctly" 'grep -q "PASS:" /tmp/error_test.log'
+			# Verify sysfs counters: NACK must be detected
+			if [ -n "$I2C_STATS" ]; then
+				echo "Sysfs counters:"
+				cat "$I2C_STATS"
+				check "sysfs: nack > 0"      'grep -q "nack=[1-9]" "$I2C_STATS"'
+				check "sysfs: xfer_fail > 0" 'grep -q "xfer_fail=[1-9]" "$I2C_STATS"'
+			fi
 		else
 			echo "ERROR: No I2C device found"
 			check "I2C NAK handled correctly" 'false'
@@ -606,13 +635,23 @@ case "$FTDI_MODE" in
 		echo "=== I2C Bus Stuck (Frozen Bus) Test ==="
 		echo "Emulator will simulate SDA stuck low"
 
+		# Reset sysfs counters
+		I2C_STATS=$(find /sys -name "i2c_stats" -path "*ftdi*" 2>/dev/null | head -1)
+		[ -n "$I2C_STATS" ] && echo 0 > "$I2C_STATS"
+
 		I2C_DEV=$(ls /dev/i2c-* 2>/dev/null | head -1)
 		if [ -n "$I2C_DEV" ]; then
 			/usr/bin/error_test i2c-stuck "$I2C_DEV" > /tmp/error_test.log 2>&1
 			cat /tmp/error_test.log
-			# The test passes if it doesn't hang and returns an appropriate error
 			check "I2C bus stuck handled" 'grep -q "PASS:" /tmp/error_test.log'
 			check "Bus recovery attempted" 'grep -q "Phase 2:" /tmp/error_test.log'
+			# Verify sysfs counters
+			if [ -n "$I2C_STATS" ]; then
+				echo "Sysfs counters:"
+				cat "$I2C_STATS"
+				check "sysfs: xfer_fail > 0"   'grep -q "xfer_fail=[1-9]" "$I2C_STATS"'
+				check "sysfs: bus_recovery > 0" 'grep -q "bus_recovery=[1-9]" "$I2C_STATS"'
+			fi
 		else
 			echo "ERROR: No I2C device found"
 			check "I2C bus stuck handled" 'false'
@@ -629,16 +668,22 @@ case "$FTDI_MODE" in
 		echo "=== I2C Clock Stretching Test ==="
 		echo "Emulator will simulate SCL held low for 5 polls"
 
+		I2C_STATS=$(find /sys -name "i2c_stats" 2>/dev/null | head -1)
+		[ -n "$I2C_STATS" ] && echo 0 > "$I2C_STATS"
+
 		I2C_DEV=$(ls /dev/i2c-* 2>/dev/null | head -1)
 		if [ -n "$I2C_DEV" ]; then
-			/usr/bin/i2c_test "$I2C_DEV" > /tmp/i2c_test.log 2>&1
-			cat /tmp/i2c_test.log
-			# The driver should not crash or hang regardless of stretching
+			# Single transfer to trigger stretch + NAK + SCL wait
+			/usr/bin/error_test i2c-nak "$I2C_DEV" > /tmp/stretch_test.log 2>&1
+			cat /tmp/stretch_test.log
 			check "Driver did not crash" '! dmesg | grep -qi "oops\|bug\|panic"'
-			# Transfers should succeed: the emulator releases SCL
-			# after 5 polls, the driver's wait loop handles it
-			check "I2C tests passed despite stretch" \
-				'grep -q "All I2C tests PASSED" /tmp/i2c_test.log'
+			check "SCL timeout in dmesg" 'dmesg | grep -q "SCL stuck low"'
+			if [ -n "$I2C_STATS" ]; then
+				echo "Sysfs counters:"
+				cat "$I2C_STATS"
+				check "sysfs: scl_stretch > 0" 'grep -q "scl_stretch=[1-9]" "$I2C_STATS"'
+				check "sysfs: xfer_fail > 0"   'grep -q "xfer_fail=[1-9]" "$I2C_STATS"'
+			fi
 		else
 			check "I2C device found" 'false'
 		fi

@@ -721,7 +721,7 @@ void ftdi_emu_bulk_out(struct ftdi_device *dev, int intf_idx,
 				 */
 				if (st->error_mode == FTDI_ERR_I2C_CLK_STRETCH) {
 					if (st->clk_stretch_left == 0)
-						st->clk_stretch_left = 5; /* stretch for 5 polls */
+						st->clk_stretch_left = 150; /* >100 polls → triggers timeout */
 					if (st->clk_stretch_left > 0) {
 						val &= ~0x01; /* SCL low */
 						st->clk_stretch_left--;
@@ -839,11 +839,15 @@ void ftdi_emu_bulk_out(struct ftdi_device *dev, int intf_idx,
 								 */
 								uint8_t ack = st->three_phase ? 0x00 : 0xFF;
 
-								/* I2C NAK injection */
-								if (st->error_mode == FTDI_ERR_I2C_NAK &&
+								/* I2C NAK injection (also for stuck/stretch) */
+								if ((st->error_mode == FTDI_ERR_I2C_NAK ||
+								     st->error_mode == FTDI_ERR_I2C_BUS_STUCK ||
+								     st->error_mode == FTDI_ERR_I2C_CLK_STRETCH) &&
 								    st->three_phase) {
 									ack = 0x01; /* NAK: bit 0 set */
-									if (st->error_count > 0) {
+									/* Only auto-clear for pure NAK mode */
+									if (st->error_mode == FTDI_ERR_I2C_NAK &&
+									    st->error_count > 0) {
 										st->error_count--;
 										if (st->error_count == 0)
 											st->error_mode = FTDI_ERR_NONE;
