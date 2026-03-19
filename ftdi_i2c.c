@@ -87,6 +87,15 @@ struct ftdi_i2c {
 	u8 sda_hi_dir;		/* pin direction when SDA released */
 	bool open_drain_hw;	/* FT232H hardware open-drain active */
 	unsigned int delay_us;	/* per-device inter-phase delay */
+
+	/* Transfer statistics (sysfs-readable) */
+	atomic_t xfer_ok;	/* successful transfers (I2C_RDWR calls) */
+	atomic_t xfer_fail;	/* failed transfers */
+	atomic_t nack_count;	/* NACK on address byte */
+	atomic_t scl_stretch;	/* clock stretching detected */
+	atomic_t bus_recovery;	/* i2c_recover_bus() called */
+	atomic64_t bytes_tx;	/* total bytes written to slave */
+	atomic64_t bytes_rx;	/* total bytes read from slave */
 };
 
 /*
@@ -351,6 +360,7 @@ static int ftdi_i2c_xfer(struct i2c_adapter *adapter,
 		if (ret)
 			goto err_stop;
 		if (ack) {
+			atomic_inc(&fi2c->nack_count);
 			ret = -ENXIO;
 			goto err_stop;
 		}
@@ -389,10 +399,20 @@ static int ftdi_i2c_xfer(struct i2c_adapter *adapter,
 	if (ret)
 		goto unlock;
 
+	/* Count successful transfer and bytes */
+	atomic_inc(&fi2c->xfer_ok);
+	for (i = 0; i < num; i++) {
+		if (msgs[i].flags & I2C_M_RD)
+			atomic64_add(msgs[i].len, &fi2c->bytes_rx);
+		else
+			atomic64_add(msgs[i].len, &fi2c->bytes_tx);
+	}
+
 	ftdi_mpsse_bus_unlock(fi2c->pdev);
 	return num;
 
 err_stop:
+	atomic_inc(&fi2c->xfer_fail);
 	pos = 0;
 	pos = ftdi_i2c_stop(fi2c, buf, pos);
 	ftdi_mpsse_write(fi2c->pdev, buf, pos);
@@ -419,15 +439,19 @@ err_stop:
 
 		while (ftdi_i2c_get_scl(adapter) == 0 && timeout-- > 0)
 			usleep_range(1000, 2000);
-		if (timeout <= 0)
+		if (timeout <= 0) {
+			atomic_inc(&fi2c->scl_stretch);
 			dev_warn(&adapter->dev,
 				 "SCL stuck low after %d ms (clock stretching timeout)\n",
 				 100);
+		}
 	}
 
 	/* If SDA is stuck low, do full 9-clock recovery */
-	if (ftdi_i2c_get_sda(adapter) == 0)
+	if (ftdi_i2c_get_sda(adapter) == 0) {
+		atomic_inc(&fi2c->bus_recovery);
 		i2c_recover_bus(adapter);
+	}
 
 	return ret;
 
@@ -668,6 +692,52 @@ static void ftdi_i2c_del_adapter(void *data)
 	i2c_del_adapter(data);
 }
 
+/*
+ * Sysfs attributes for transfer statistics.
+ * Read via: cat /sys/devices/.../i2c_stats
+ * Reset via: echo 0 > /sys/devices/.../i2c_stats
+ */
+static ssize_t i2c_stats_show(struct device *dev,
+			      struct device_attribute *attr, char *buf)
+{
+	struct ftdi_i2c *fi2c = dev_get_drvdata(dev);
+
+	return sysfs_emit(buf,
+		"xfer_ok=%d\n"
+		"xfer_fail=%d\n"
+		"nack=%d\n"
+		"scl_stretch=%d\n"
+		"bus_recovery=%d\n"
+		"bytes_tx=%lld\n"
+		"bytes_rx=%lld\n",
+		atomic_read(&fi2c->xfer_ok),
+		atomic_read(&fi2c->xfer_fail),
+		atomic_read(&fi2c->nack_count),
+		atomic_read(&fi2c->scl_stretch),
+		atomic_read(&fi2c->bus_recovery),
+		(long long)atomic64_read(&fi2c->bytes_tx),
+		(long long)atomic64_read(&fi2c->bytes_rx));
+}
+
+static ssize_t i2c_stats_store(struct device *dev,
+			       struct device_attribute *attr,
+			       const char *buf, size_t count)
+{
+	struct ftdi_i2c *fi2c = dev_get_drvdata(dev);
+
+	atomic_set(&fi2c->xfer_ok, 0);
+	atomic_set(&fi2c->xfer_fail, 0);
+	atomic_set(&fi2c->nack_count, 0);
+	atomic_set(&fi2c->scl_stretch, 0);
+	atomic_set(&fi2c->bus_recovery, 0);
+	atomic64_set(&fi2c->bytes_tx, 0);
+	atomic64_set(&fi2c->bytes_rx, 0);
+
+	return count;
+}
+
+static DEVICE_ATTR_RW(i2c_stats);
+
 static int ftdi_i2c_probe(struct platform_device *pdev)
 {
 	struct ftdi_i2c *fi2c;
@@ -764,6 +834,11 @@ static int ftdi_i2c_probe(struct platform_device *pdev)
 		 speed,
 		 fi2c->open_drain_hw ? ", HW open-drain" : "",
 		 clock_stretching ? ", clock stretching (AD7)" : "");
+
+	ret = device_create_file(&pdev->dev, &dev_attr_i2c_stats);
+	if (ret)
+		dev_warn(&pdev->dev, "failed to create i2c_stats sysfs: %d\n",
+			 ret);
 
 	return 0;
 }
