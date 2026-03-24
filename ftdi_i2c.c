@@ -92,8 +92,10 @@ struct ftdi_i2c {
 	atomic_t xfer_ok;	/* successful transfers (I2C_RDWR calls) */
 	atomic_t xfer_fail;	/* failed transfers */
 	atomic_t nack_count;	/* NACK on address byte */
-	atomic_t scl_stretch;	/* clock stretching detected */
+	atomic_t data_nack;	/* NACK on data byte (mid-write) */
+	atomic_t scl_stretch;	/* SCL stuck low timeout (>100 ms) */
 	atomic_t bus_recovery;	/* i2c_recover_bus() called */
+	atomic_t timeout_count;	/* USB/MPSSE level timeout */
 	atomic64_t bytes_tx;	/* total bytes written to slave */
 	atomic64_t bytes_rx;	/* total bytes read from slave */
 };
@@ -383,6 +385,7 @@ static int ftdi_i2c_xfer(struct i2c_adapter *adapter,
 				if (ret)
 					goto err_stop;
 				if (ack) {
+					atomic_inc(&fi2c->data_nack);
 					ret = -EPIPE;
 					goto err_stop;
 				}
@@ -413,6 +416,8 @@ static int ftdi_i2c_xfer(struct i2c_adapter *adapter,
 
 err_stop:
 	atomic_inc(&fi2c->xfer_fail);
+	if (ret == -ETIMEDOUT)
+		atomic_inc(&fi2c->timeout_count);
 	pos = 0;
 	pos = ftdi_i2c_stop(fi2c, buf, pos);
 	ftdi_mpsse_write(fi2c->pdev, buf, pos);
@@ -706,6 +711,8 @@ static ssize_t i2c_stats_show(struct device *dev,
 		"xfer_ok=%d\n"
 		"xfer_fail=%d\n"
 		"nack=%d\n"
+		"data_nack=%d\n"
+		"timeout=%d\n"
 		"scl_stretch=%d\n"
 		"bus_recovery=%d\n"
 		"bytes_tx=%lld\n"
@@ -713,6 +720,8 @@ static ssize_t i2c_stats_show(struct device *dev,
 		atomic_read(&fi2c->xfer_ok),
 		atomic_read(&fi2c->xfer_fail),
 		atomic_read(&fi2c->nack_count),
+		atomic_read(&fi2c->data_nack),
+		atomic_read(&fi2c->timeout_count),
 		atomic_read(&fi2c->scl_stretch),
 		atomic_read(&fi2c->bus_recovery),
 		(long long)atomic64_read(&fi2c->bytes_tx),
@@ -728,6 +737,8 @@ static ssize_t i2c_stats_store(struct device *dev,
 	atomic_set(&fi2c->xfer_ok, 0);
 	atomic_set(&fi2c->xfer_fail, 0);
 	atomic_set(&fi2c->nack_count, 0);
+	atomic_set(&fi2c->data_nack, 0);
+	atomic_set(&fi2c->timeout_count, 0);
 	atomic_set(&fi2c->scl_stretch, 0);
 	atomic_set(&fi2c->bus_recovery, 0);
 	atomic64_set(&fi2c->bytes_tx, 0);
