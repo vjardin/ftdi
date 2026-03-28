@@ -86,6 +86,7 @@ struct ftdi_i2c {
 	u8 sda_hi_val;		/* pin value to release SDA */
 	u8 sda_hi_dir;		/* pin direction when SDA released */
 	bool open_drain_hw;	/* FT232H hardware open-drain active */
+	unsigned int speed_khz;	/* current I2C bus speed in kHz */
 	unsigned int delay_us;	/* per-device inter-phase delay */
 
 	/* Transfer statistics (sysfs-readable) */
@@ -603,7 +604,7 @@ static int ftdi_i2c_hw_init(struct ftdi_i2c *fi2c)
 	 *   freq = 60 MHz / ((1 + div) * 3)
 	 * Round up the divisor so the actual clock never exceeds the target.
 	 */
-	speed = clamp_val(i2c_speed, 10, 400);
+	speed = clamp_val(fi2c->speed_khz, 10, 400);
 	div = DIV_ROUND_UP(60000, speed * 3) - 1;
 	buf[pos++] = MPSSE_SET_CLK_DIVISOR;
 	buf[pos++] = div & 0xff;
@@ -751,11 +752,50 @@ static ssize_t i2c_stats_store(struct device *dev,
 
 static DEVICE_ATTR_RW(i2c_stats);
 
+/*
+ * Runtime I2C bus speed control.
+ * Read: current speed in kHz.
+ * Write: new speed in kHz (10-400), re-programs the MPSSE clock divisor live.
+ */
+static ssize_t i2c_speed_khz_show(struct device *dev,
+				   struct device_attribute *attr, char *buf)
+{
+	struct ftdi_i2c *fi2c = dev_get_drvdata(dev);
+
+	return sysfs_emit(buf, "%u\n", fi2c->speed_khz);
+}
+
+static ssize_t i2c_speed_khz_store(struct device *dev,
+				    struct device_attribute *attr,
+				    const char *buf, size_t count)
+{
+	struct ftdi_i2c *fi2c = dev_get_drvdata(dev);
+	unsigned int speed;
+	int ret;
+
+	ret = kstrtouint(buf, 10, &speed);
+	if (ret)
+		return ret;
+
+	speed = clamp_val(speed, 10, 400);
+	fi2c->speed_khz = speed;
+
+	ftdi_mpsse_bus_lock(fi2c->pdev);
+	ret = ftdi_i2c_hw_init(fi2c);
+	ftdi_mpsse_bus_unlock(fi2c->pdev);
+	if (ret)
+		return ret;
+
+	dev_info(dev, "I2C speed changed to %u kHz\n", speed);
+	return count;
+}
+
+static DEVICE_ATTR_RW(i2c_speed_khz);
+
 static int ftdi_i2c_probe(struct platform_device *pdev)
 {
 	struct ftdi_i2c *fi2c;
 	enum ftdi_mpsse_chip_type chip;
-	unsigned int speed;
 	int ret;
 
 	fi2c = devm_kzalloc(&pdev->dev, sizeof(*fi2c), GFP_KERNEL);
@@ -771,6 +811,7 @@ static int ftdi_i2c_probe(struct platform_device *pdev)
 		return -ENOMEM;
 
 	fi2c->pdev = pdev;
+	fi2c->speed_khz = clamp_val(i2c_speed, 10, 400);
 
 	/* Software open-drain defaults (FT2232H, FT4232H) */
 	fi2c->sda_hi_val = 0x00;
@@ -842,9 +883,8 @@ static int ftdi_i2c_probe(struct platform_device *pdev)
 		}
 	}
 
-	speed = clamp_val(i2c_speed, 10, 400);
 	dev_info(&pdev->dev, "FTDI MPSSE I2C adapter at %u kHz%s%s\n",
-		 speed,
+		 fi2c->speed_khz,
 		 fi2c->open_drain_hw ? ", HW open-drain" : "",
 		 clock_stretching ? ", clock stretching (AD7)" : "");
 
@@ -852,6 +892,11 @@ static int ftdi_i2c_probe(struct platform_device *pdev)
 	if (ret)
 		dev_warn(&pdev->dev, "failed to create i2c_stats sysfs: %d\n",
 			 ret);
+
+	ret = device_create_file(&pdev->dev, &dev_attr_i2c_speed_khz);
+	if (ret)
+		dev_warn(&pdev->dev,
+			 "failed to create i2c_speed_khz sysfs: %d\n", ret);
 
 	return 0;
 }
