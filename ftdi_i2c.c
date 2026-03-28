@@ -278,6 +278,8 @@ static int ftdi_i2c_write_byte_flush(struct ftdi_i2c *fi2c,
 		return ret;
 
 	*ack = rsp & 0x01;
+	dev_dbg(&fi2c->pdev->dev, "write_byte 0x%02x rsp=0x%02x ack=%d\n",
+		byte, rsp, *ack);
 	*ppos = 0;
 	return 0;
 }
@@ -586,7 +588,7 @@ static int ftdi_i2c_hw_init(struct ftdi_i2c *fi2c)
 	/* Disable CLK/5 -> 60 MHz base clock */
 	buf[pos++] = MPSSE_DISABLE_CLK_DIV5;
 
-	/* Enable 3-phase data clocking (required for I2C) */
+	/* Enable 3-phase data clocking (required for I2C per AN_113) */
 	buf[pos++] = MPSSE_ENABLE_3PHASE;
 
 	/*
