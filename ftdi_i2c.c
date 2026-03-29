@@ -177,29 +177,39 @@ static int ftdi_i2c_repeated_start(struct ftdi_i2c *fi2c,
 				   u8 *buf, unsigned int *ppos)
 {
 	unsigned int pos = 0;
-	int i, ret;
+	int i;
 
-	/* Release SDA + raise SCL — flush via USB for settle time */
-	buf[pos++] = MPSSE_SET_BITS_LOW;
-	buf[pos++] = fi2c->sda_hi_val;
-	buf[pos++] = fi2c->sda_hi_dir;
+	/*
+	 * Repeated START: all phases in ONE buffer (no intermediate USB
+	 * flush).  The MPSSE processes them back-to-back (~500ns from
+	 * SCL HIGH to SDA fall).  A separate USB flush would create a
+	 * ~250µs gap that PIO slaves cannot detect.
+	 *
+	 * See doc/hw-design.md "Repeated START and PIO Slave Timing".
+	 */
 
-	buf[pos++] = MPSSE_SET_BITS_LOW;
-	buf[pos++] = PIN_SCL | fi2c->sda_hi_val;
-	buf[pos++] = fi2c->sda_hi_dir;
+	/* Phase 1: release SDA (4x for rise time) */
+	for (i = 0; i < 4; i++) {
+		buf[pos++] = MPSSE_SET_BITS_LOW;
+		buf[pos++] = fi2c->sda_hi_val;
+		buf[pos++] = fi2c->sda_hi_dir;
+	}
 
-	ret = ftdi_mpsse_write(fi2c->pdev, buf, pos);
-	if (ret)
-		return ret;
+	/* Phase 1b: raise SCL (4x for rise time) */
+	for (i = 0; i < 4; i++) {
+		buf[pos++] = MPSSE_SET_BITS_LOW;
+		buf[pos++] = PIN_SCL | fi2c->sda_hi_val;
+		buf[pos++] = fi2c->sda_hi_dir;
+	}
 
-	/* Pull SDA low while SCL high — START, then SCL low (4x per AN_113) */
-	pos = 0;
+	/* Phase 2: SDA low while SCL high — START (4x per AN_113) */
 	for (i = 0; i < 4; i++) {
 		buf[pos++] = MPSSE_SET_BITS_LOW;
 		buf[pos++] = PIN_SCL;
 		buf[pos++] = PIN_SCL | PIN_SDA_OUT;
 	}
 
+	/* Phase 3: SCL low — hold (4x) */
 	for (i = 0; i < 4; i++) {
 		buf[pos++] = MPSSE_SET_BITS_LOW;
 		buf[pos++] = 0x00;
