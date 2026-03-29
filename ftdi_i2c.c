@@ -424,6 +424,26 @@ static int ftdi_i2c_xfer(struct i2c_adapter *adapter,
 			atomic64_add(msgs[i].len, &fi2c->bytes_tx);
 	}
 
+	/*
+	 * Post-STOP bus health check.  After a successful STOP, both
+	 * SDA and SCL should be HIGH (idle bus).  If SDA is stuck LOW
+	 * the transfer data is likely corrupted — the slave was holding
+	 * SDA LOW throughout the transaction, so every ACK check read
+	 * LOW regardless of the actual slave response.
+	 *
+	 * This catches faults like a slave driving SDA permanently LOW
+	 * (e.g. crashed firmware, bus contention) that the per-byte ACK
+	 * check cannot distinguish from a valid ACK.
+	 */
+	if (ftdi_i2c_get_sda(&fi2c->adapter) == 0) {
+		dev_warn(&fi2c->adapter.dev,
+			 "SDA stuck low after successful STOP — data unreliable\n");
+		atomic_inc(&fi2c->bus_recovery);
+		ftdi_mpsse_bus_unlock(fi2c->pdev);
+		i2c_recover_bus(&fi2c->adapter);
+		return -EIO;
+	}
+
 	ftdi_mpsse_bus_unlock(fi2c->pdev);
 	return num;
 
