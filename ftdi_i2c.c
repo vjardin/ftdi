@@ -53,7 +53,7 @@ MODULE_PARM_DESC(i2c_speed, "I2C bus speed in kHz (10-400, default 100)");
 
 /*
  * MPSSE adaptive clocking (0x96) monitors GPIOL3 (AD7), not the SCL
- * line (AD0).  Per AN_255 §2.4: "the MPSSE does not automatically
+ * line (AD0).  Per AN_255 Section 2.4: "the MPSSE does not automatically
  * support clock stretching for I2C."  To use this feature, the user
  * must wire SCL to both AD0 and GPIOL3 (AD7) externally.
  */
@@ -126,10 +126,10 @@ static unsigned int ftdi_i2c_idle_pins(struct ftdi_i2c *fi2c, u8 *buf,
 /*
  * I2C START condition: SDA goes low while SCL is high.
  *
- * Per AN_113 §2.3.1, the sequence has 3 phases, each repeated 4x:
- *   1. SDA=1, SCL=1 (idle — ensure bus is released before START)
- *   2. SDA=0, SCL=1 (START setup — SDA falls while SCL high)
- *   3. SDA=0, SCL=0 (hold — prepare for first data byte)
+ * Per AN_113 Section 2.3.1, the sequence has 3 phases, each repeated 4x:
+ *   1. SDA=1, SCL=1 (idle  -- ensure bus is released before START)
+ *   2. SDA=0, SCL=1 (START setup  -- SDA falls while SCL high)
+ *   3. SDA=0, SCL=0 (hold  -- prepare for first data byte)
  *
  * The 4x repetition guarantees I2C setup/hold times
  * (tSU;STA = 600 ns standard, 260 ns fast mode).
@@ -139,21 +139,21 @@ static unsigned int ftdi_i2c_start(struct ftdi_i2c *fi2c, u8 *buf,
 {
 	int i;
 
-	/* Phase 1: ensure bus idle — SDA=1, SCL=1 (per AN_113) */
+	/* Phase 1: ensure bus idle  -- SDA=1, SCL=1 (per AN_113) */
 	for (i = 0; i < 4; i++) {
 		buf[pos++] = MPSSE_SET_BITS_LOW;
 		buf[pos++] = PIN_SCL | fi2c->sda_hi_val;
 		buf[pos++] = fi2c->sda_hi_dir;
 	}
 
-	/* Phase 2: SDA low while SCL high — START setup */
+	/* Phase 2: SDA low while SCL high  -- START setup */
 	for (i = 0; i < 4; i++) {
 		buf[pos++] = MPSSE_SET_BITS_LOW;
 		buf[pos++] = PIN_SCL;			/* SCL=1, SDA=0 */
 		buf[pos++] = PIN_SCL | PIN_SDA_OUT;
 	}
 
-	/* Phase 3: SCL low — hold START */
+	/* Phase 3: SCL low  -- hold START */
 	for (i = 0; i < 4; i++) {
 		buf[pos++] = MPSSE_SET_BITS_LOW;
 		buf[pos++] = 0x00;			/* SCL=0, SDA=0 */
@@ -183,7 +183,7 @@ static int ftdi_i2c_repeated_start(struct ftdi_i2c *fi2c,
 	 * Repeated START: all phases in ONE buffer (no intermediate USB
 	 * flush).  The MPSSE processes them back-to-back (~500ns from
 	 * SCL HIGH to SDA fall).  A separate USB flush would create a
-	 * ~250µs gap that PIO slaves cannot detect.
+	 * ~250us gap that PIO slaves cannot detect.
 	 *
 	 * See doc/hw-design.md "Repeated START and PIO Slave Timing".
 	 */
@@ -202,14 +202,14 @@ static int ftdi_i2c_repeated_start(struct ftdi_i2c *fi2c,
 		buf[pos++] = fi2c->sda_hi_dir;
 	}
 
-	/* Phase 2: SDA low while SCL high — START (4x per AN_113) */
+	/* Phase 2: SDA low while SCL high  -- START (4x per AN_113) */
 	for (i = 0; i < 4; i++) {
 		buf[pos++] = MPSSE_SET_BITS_LOW;
 		buf[pos++] = PIN_SCL;
 		buf[pos++] = PIN_SCL | PIN_SDA_OUT;
 	}
 
-	/* Phase 3: SCL low — hold (4x) */
+	/* Phase 3: SCL low  -- hold (4x) */
 	for (i = 0; i < 4; i++) {
 		buf[pos++] = MPSSE_SET_BITS_LOW;
 		buf[pos++] = 0x00;
@@ -229,21 +229,21 @@ static unsigned int ftdi_i2c_stop(struct ftdi_i2c *fi2c, u8 *buf,
 {
 	int i;
 
-	/* SDA low, SCL low — setup */
+	/* SDA low, SCL low  -- setup */
 	for (i = 0; i < 4; i++) {
 		buf[pos++] = MPSSE_SET_BITS_LOW;
 		buf[pos++] = 0x00;
 		buf[pos++] = PIN_SCL | PIN_SDA_OUT;
 	}
 
-	/* SCL high, SDA still low — STOP setup */
+	/* SCL high, SDA still low  -- STOP setup */
 	for (i = 0; i < 4; i++) {
 		buf[pos++] = MPSSE_SET_BITS_LOW;
 		buf[pos++] = PIN_SCL;
 		buf[pos++] = PIN_SCL | PIN_SDA_OUT;
 	}
 
-	/* SDA high while SCL high — STOP, then idle */
+	/* SDA high while SCL high  -- STOP, then idle */
 	buf[pos++] = MPSSE_SET_BITS_LOW;
 	buf[pos++] = PIN_SCL | fi2c->sda_hi_val;
 	buf[pos++] = fi2c->sda_hi_dir;
@@ -257,7 +257,7 @@ static unsigned int ftdi_i2c_stop(struct ftdi_i2c *fi2c, u8 *buf,
  */
 /*
  * Write one byte, read ACK, flush to USB.
- * One USB round-trip per byte — matches libmpsse behaviour.
+ * One USB round-trip per byte  -- matches libmpsse behaviour.
  * Returns 0 on success; *ack = 0 (ACK) or 1 (NACK).
  */
 static int ftdi_i2c_write_byte_flush(struct ftdi_i2c *fi2c,
@@ -297,7 +297,7 @@ static int ftdi_i2c_write_byte_flush(struct ftdi_i2c *fi2c,
 
 /*
  * Read one byte, send ACK/NACK, flush to USB.
- * One USB round-trip per byte — matches write path behaviour and gives
+ * One USB round-trip per byte  -- matches write path behaviour and gives
  * the open-drain pull-up time to settle SDA between bytes.
  *
  * Batching multiple read bytes per USB round-trip (like libmpsse does)
@@ -369,7 +369,7 @@ static int ftdi_i2c_xfer(struct i2c_adapter *adapter,
 				goto err_stop;
 		}
 
-		/* Send address byte — one USB round-trip */
+		/* Send address byte  -- one USB round-trip */
 		ret = ftdi_i2c_write_byte_flush(fi2c, buf, &pos,
 				i2c_8bit_addr_from_msg(msg), &ack);
 		if (ret)
@@ -381,7 +381,7 @@ static int ftdi_i2c_xfer(struct i2c_adapter *adapter,
 		}
 
 		if (msg->flags & I2C_M_RD) {
-			/* Read data — one USB round-trip per byte */
+			/* Read data  -- one USB round-trip per byte */
 			for (j = 0; j < msg->len; j++) {
 				bool last = (j == msg->len - 1);
 
@@ -391,7 +391,7 @@ static int ftdi_i2c_xfer(struct i2c_adapter *adapter,
 					goto err_stop;
 			}
 		} else {
-			/* Write data — one USB round-trip per byte */
+			/* Write data  -- one USB round-trip per byte */
 			for (j = 0; j < msg->len; j++) {
 				ret = ftdi_i2c_write_byte_flush(fi2c, buf,
 						&pos, msg->buf[j], &ack);
@@ -427,7 +427,7 @@ static int ftdi_i2c_xfer(struct i2c_adapter *adapter,
 	/*
 	 * Post-STOP bus health check.  After a successful STOP, both
 	 * SDA and SCL should be HIGH (idle bus).  If SDA is stuck LOW
-	 * the transfer data is likely corrupted — the slave was holding
+	 * the transfer data is likely corrupted  -- the slave was holding
 	 * SDA LOW throughout the transaction, so every ACK check read
 	 * LOW regardless of the actual slave response.
 	 *
@@ -437,7 +437,7 @@ static int ftdi_i2c_xfer(struct i2c_adapter *adapter,
 	 */
 	if (ftdi_i2c_get_sda(&fi2c->adapter) == 0) {
 		dev_warn(&fi2c->adapter.dev,
-			 "SDA stuck low after successful STOP — data unreliable\n");
+			 "SDA stuck low after successful STOP  -- data unreliable\n");
 		atomic_inc(&fi2c->bus_recovery);
 		ftdi_mpsse_bus_unlock(fi2c->pdev);
 		i2c_recover_bus(&fi2c->adapter);
@@ -460,7 +460,7 @@ err_stop:
 	 * (holding SCL low) or holding SDA low (stuck bus).
 	 *
 	 * The MPSSE does not natively detect I2C clock stretching
-	 * (AN_255 §2.4).  Poll SCL via GET_BITS_LOW to give the slave
+	 * (AN_255 Section 2.4).  Poll SCL via GET_BITS_LOW to give the slave
 	 * time to finish processing before attempting recovery.
 	 *
 	 * If SCL is free but SDA is stuck, do full bus recovery:
@@ -624,7 +624,7 @@ static int ftdi_i2c_hw_init(struct ftdi_i2c *fi2c)
 
 	/*
 	 * Adaptive clocking for clock stretching.  Monitors GPIOL3 (AD7),
-	 * not SCL (AD0) — requires external wiring of SCL to AD7.
+	 * not SCL (AD0)  -- requires external wiring of SCL to AD7.
 	 */
 	buf[pos++] = clock_stretching ? MPSSE_ENABLE_ADAPTIVE
 				      : MPSSE_DISABLE_ADAPTIVE;
