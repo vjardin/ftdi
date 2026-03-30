@@ -64,6 +64,12 @@ MODULE_PARM_DESC(clock_stretching,
 		 "Enable adaptive clocking for I2C clock stretching "
 		 "(requires SCL wired to both AD0 and GPIOL3/AD7, default 0)");
 
+static bool bus_checks;
+module_param(bus_checks, bool, 0444);
+MODULE_PARM_DESC(bus_checks,
+		 "Run SDA loopback and SCL/SDA short checks at probe time "
+		 "(may desync PIO slaves, use for board bring-up only, default 0)");
+
 static char *i2c_bus_nr_map;
 module_param(i2c_bus_nr_map, charp, 0444);
 MODULE_PARM_DESC(i2c_bus_nr_map,
@@ -611,30 +617,78 @@ static struct i2c_bus_recovery_info ftdi_i2c_recovery = {
 };
 
 /*
- * Detect if AD7 (GPIOL3) is wired to AD0 (SCL) by toggling SCL
- * and reading AD7.  If AD7 follows AD0, adaptive clocking can be
- * enabled automatically.
+ * Detect if AD7 (GPIOL3) is wired to AD0 (SCL) by reading AD7 in
+ * two bus states: SCL HIGH (idle) and SCL LOW.  If AD7 follows AD0,
+ * adaptive clocking can be enabled automatically.
+ *
+ * The SCL toggle and restore are in a SINGLE USB transfer to minimize
+ * the time SCL is LOW.  SDA is never driven to avoid false START on
+ * PIO-based slaves.
  */
 static bool ftdi_i2c_detect_ad7(struct ftdi_i2c *fi2c)
 {
 	u8 *buf = fi2c->buf;
+	u8 rsp[2]; /* val_hi, val_lo */
+	int ret;
+
+	/*
+	 * Transfer 1: read pins with bus idle (SCL HIGH from hw_init).
+	 */
+	buf[0] = MPSSE_GET_BITS_LOW;
+	buf[1] = MPSSE_SEND_IMMEDIATE;
+	ret = ftdi_mpsse_xfer(fi2c->pdev, buf, 2, &rsp[0], 1);
+	if (ret)
+		return false;
+
+	/*
+	 * Transfer 2: drive SCL LOW, read pins, restore SCL HIGH.
+	 * All in one USB transfer so the LOW pulse is brief (~200ns).
+	 * SDA stays released (sda_hi_val) throughout.
+	 */
+	buf[0] = MPSSE_SET_BITS_LOW;
+	buf[1] = fi2c->sda_hi_val;		/* SCL=0, SDA=released */
+	buf[2] = fi2c->sda_hi_dir;
+	buf[3] = MPSSE_GET_BITS_LOW;
+	buf[4] = MPSSE_SET_BITS_LOW;		/* restore idle */
+	buf[5] = PIN_SCL | fi2c->sda_hi_val;
+	buf[6] = fi2c->sda_hi_dir;
+	buf[7] = MPSSE_SEND_IMMEDIATE;
+	ret = ftdi_mpsse_xfer(fi2c->pdev, buf, 8, &rsp[1], 1);
+	if (ret)
+		return false;
+
+	/* AD7 must be HIGH when SCL HIGH and LOW when SCL LOW */
+	return (rsp[0] & PIN_SCL_SENSE) && !(rsp[1] & PIN_SCL_SENSE);
+}
+
+/*
+ * Verify AD1 (SDA out) and AD2 (SDA in) are wired together.
+ * Without this connection the master can send data but cannot
+ * read ACK from slaves.  Returns 0 on success, -EFAULT if not wired.
+ */
+static int ftdi_i2c_check_sda_loopback(struct ftdi_i2c *fi2c)
+{
+	struct device *dev = &fi2c->pdev->dev;
+	u8 *buf = fi2c->buf;
 	u8 val;
 	int ret;
 
-	/* Drive SCL LOW, read pins */
+	/* Drive SDA LOW (AD1=0), read AD2 -- should be LOW */
 	buf[0] = MPSSE_SET_BITS_LOW;
-	buf[1] = 0x00;				/* SCL=0, SDA=0 */
-	buf[2] = PIN_SCL | PIN_SDA_OUT;	/* AD0+AD1 outputs */
+	buf[1] = PIN_SCL;			/* SCL=1, SDA=0 */
+	buf[2] = PIN_SCL | PIN_SDA_OUT;
 	buf[3] = MPSSE_GET_BITS_LOW;
 	buf[4] = MPSSE_SEND_IMMEDIATE;
 	ret = ftdi_mpsse_xfer(fi2c->pdev, buf, 5, &val, 1);
 	if (ret)
-		return false;
+		return ret;
 
-	if (val & PIN_SCL_SENSE) /* AD7 HIGH while SCL LOW -> not wired */
-		return false;
+	if (val & PIN_SDA_IN) {
+		dev_warn(dev, "AD1<->AD2 may not be wired: AD2 HIGH while AD1 LOW\n");
+		dev_warn(dev, "I2C requires AD1 (DO) and AD2 (DI) connected\n");
+	}
 
-	/* Release SCL (HIGH via pull-up), read pins */
+	/* Release SDA (AD1=1/high-Z), read AD2 -- should be HIGH (pull-up) */
 	buf[0] = MPSSE_SET_BITS_LOW;
 	buf[1] = PIN_SCL | fi2c->sda_hi_val;
 	buf[2] = fi2c->sda_hi_dir;
@@ -642,12 +696,60 @@ static bool ftdi_i2c_detect_ad7(struct ftdi_i2c *fi2c)
 	buf[4] = MPSSE_SEND_IMMEDIATE;
 	ret = ftdi_mpsse_xfer(fi2c->pdev, buf, 5, &val, 1);
 	if (ret)
-		return false;
+		return ret;
 
-	if (!(val & PIN_SCL_SENSE)) /* AD7 LOW while SCL HIGH -> not wired */
-		return false;
+	if (!(val & PIN_SDA_IN)) {
+		dev_warn(dev, "SDA stuck LOW after release (check pull-up)\n");
+	}
 
-	return true; /* AD7 follows AD0 -> wired together */
+	return 0;
+}
+
+/*
+ * Check that SCL and SDA are not shorted together.
+ * Drive one HIGH and the other LOW, verify they read independently.
+ * Returns 0 on success, -EFAULT if shorted.
+ */
+static int ftdi_i2c_check_bus_short(struct ftdi_i2c *fi2c)
+{
+	struct device *dev = &fi2c->pdev->dev;
+	u8 *buf = fi2c->buf;
+	u8 val;
+	int ret;
+
+	/* SCL HIGH, SDA LOW -- if shorted, both read the same */
+	buf[0] = MPSSE_SET_BITS_LOW;
+	buf[1] = PIN_SCL;			/* SCL=1, SDA=0 */
+	buf[2] = PIN_SCL | PIN_SDA_OUT;
+	buf[3] = MPSSE_GET_BITS_LOW;
+	buf[4] = MPSSE_SEND_IMMEDIATE;
+	ret = ftdi_mpsse_xfer(fi2c->pdev, buf, 5, &val, 1);
+	if (ret)
+		return ret;
+
+	if (!(val & PIN_SCL))
+		dev_warn(dev, "SCL<->SDA short: SCL LOW while driven HIGH\n");
+
+	/* SCL LOW, SDA HIGH -- reverse test */
+	buf[0] = MPSSE_SET_BITS_LOW;
+	buf[1] = fi2c->sda_hi_val;		/* SCL=0, SDA=1 (released) */
+	buf[2] = PIN_SCL | PIN_SDA_OUT;
+	buf[3] = MPSSE_GET_BITS_LOW;
+	buf[4] = MPSSE_SEND_IMMEDIATE;
+	ret = ftdi_mpsse_xfer(fi2c->pdev, buf, 5, &val, 1);
+	if (ret)
+		return ret;
+
+	if (!(val & PIN_SDA_IN))
+		dev_warn(dev, "SCL<->SDA short: SDA LOW while SCL driven LOW\n");
+
+	/* Restore idle state */
+	buf[0] = MPSSE_SET_BITS_LOW;
+	buf[1] = PIN_SCL | fi2c->sda_hi_val;
+	buf[2] = fi2c->sda_hi_dir;
+	ret = ftdi_mpsse_write(fi2c->pdev, buf, 3);
+
+	return ret;
 }
 
 static int ftdi_i2c_hw_init(struct ftdi_i2c *fi2c)
@@ -905,6 +1007,24 @@ static int ftdi_i2c_probe(struct platform_device *pdev)
 	}
 
 	/*
+	 * Bus sanity checks.  Run after hw_init so the MPSSE is
+	 * configured but before any I2C transactions.  These are
+	 * non-fatal -- warn on dmesg but continue probing.
+	 */
+	/*
+	 * Bus wiring checks.  Disabled by default because the pin
+	 * toggling desynchronizes PIO-based slaves that lack a global
+	 * idle watchdog.  Enable for initial board bring-up only.
+	 */
+	if (bus_checks) {
+		ftdi_mpsse_bus_lock(pdev);
+		ftdi_i2c_check_sda_loopback(fi2c);
+		ftdi_i2c_check_bus_short(fi2c);
+		ftdi_mpsse_bus_unlock(pdev);
+		usleep_range(5000, 10000);
+	}
+
+	/*
 	 * Auto-detect AD7<->AD0 wiring for clock stretching.
 	 * Toggle SCL and check if AD7 follows.  If yes, enable
 	 * adaptive clocking automatically (no module parameter needed).
@@ -916,11 +1036,25 @@ static int ftdi_i2c_probe(struct platform_device *pdev)
 			ret = ftdi_i2c_hw_init(fi2c); /* re-init with adaptive */
 			dev_info(&pdev->dev,
 				 "AD7<->SCL wiring detected, adaptive clocking enabled\n");
+		} else {
+			dev_info(&pdev->dev,
+				 "AD7 not wired to SCL -- no clock stretching support\n");
+			dev_info(&pdev->dev,
+				 "slave-driven NACK and compound reads above 100 kHz unavailable\n");
+			dev_info(&pdev->dev,
+				 "wire AD7 (D7) to AD0 (D0) to enable full I2C support\n");
 		}
 		ftdi_mpsse_bus_unlock(pdev);
 		if (ret)
 			return ret;
 	}
+
+	/*
+	 * Brief settle time after AD7 detection SCL toggle.
+	 * The detection no longer drives SDA, so PIO slaves should
+	 * not desync.  This is just a safety margin.
+	 */
+	usleep_range(2000, 3000);
 
 	ftdi_i2c_check_eeprom(pdev);
 
