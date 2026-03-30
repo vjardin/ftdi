@@ -34,6 +34,7 @@
 #define PIN_SCL		BIT(0)	/* AD0 */
 #define PIN_SDA_OUT	BIT(1)	/* AD1 -- DO */
 #define PIN_SDA_IN	BIT(2)	/* AD2 -- DI (wired to AD1) */
+#define PIN_SCL_SENSE	BIT(7)	/* AD7 -- GPIOL3 (clock stretching sense) */
 
 /* Forward declarations for bus recovery / clock stretching */
 static int ftdi_i2c_get_scl(struct i2c_adapter *adap);
@@ -609,6 +610,46 @@ static struct i2c_bus_recovery_info ftdi_i2c_recovery = {
 	.unprepare_recovery = ftdi_i2c_unprepare_recovery,
 };
 
+/*
+ * Detect if AD7 (GPIOL3) is wired to AD0 (SCL) by toggling SCL
+ * and reading AD7.  If AD7 follows AD0, adaptive clocking can be
+ * enabled automatically.
+ */
+static bool ftdi_i2c_detect_ad7(struct ftdi_i2c *fi2c)
+{
+	u8 *buf = fi2c->buf;
+	u8 val;
+	int ret;
+
+	/* Drive SCL LOW, read pins */
+	buf[0] = MPSSE_SET_BITS_LOW;
+	buf[1] = 0x00;				/* SCL=0, SDA=0 */
+	buf[2] = PIN_SCL | PIN_SDA_OUT;	/* AD0+AD1 outputs */
+	buf[3] = MPSSE_GET_BITS_LOW;
+	buf[4] = MPSSE_SEND_IMMEDIATE;
+	ret = ftdi_mpsse_xfer(fi2c->pdev, buf, 5, &val, 1);
+	if (ret)
+		return false;
+
+	if (val & PIN_SCL_SENSE) /* AD7 HIGH while SCL LOW -> not wired */
+		return false;
+
+	/* Release SCL (HIGH via pull-up), read pins */
+	buf[0] = MPSSE_SET_BITS_LOW;
+	buf[1] = PIN_SCL | fi2c->sda_hi_val;
+	buf[2] = fi2c->sda_hi_dir;
+	buf[3] = MPSSE_GET_BITS_LOW;
+	buf[4] = MPSSE_SEND_IMMEDIATE;
+	ret = ftdi_mpsse_xfer(fi2c->pdev, buf, 5, &val, 1);
+	if (ret)
+		return false;
+
+	if (!(val & PIN_SCL_SENSE)) /* AD7 LOW while SCL HIGH -> not wired */
+		return false;
+
+	return true; /* AD7 follows AD0 -> wired together */
+}
+
 static int ftdi_i2c_hw_init(struct ftdi_i2c *fi2c)
 {
 	u8 *buf = fi2c->buf;
@@ -861,6 +902,24 @@ static int ftdi_i2c_probe(struct platform_device *pdev)
 	if (ret) {
 		dev_err(&pdev->dev, "MPSSE I2C init failed: %d\n", ret);
 		return ret;
+	}
+
+	/*
+	 * Auto-detect AD7<->AD0 wiring for clock stretching.
+	 * Toggle SCL and check if AD7 follows.  If yes, enable
+	 * adaptive clocking automatically (no module parameter needed).
+	 */
+	if (!clock_stretching && chip == FTDI_CHIP_FT232H) {
+		ftdi_mpsse_bus_lock(pdev);
+		if (ftdi_i2c_detect_ad7(fi2c)) {
+			clock_stretching = true;
+			ret = ftdi_i2c_hw_init(fi2c); /* re-init with adaptive */
+			dev_info(&pdev->dev,
+				 "AD7<->SCL wiring detected, adaptive clocking enabled\n");
+		}
+		ftdi_mpsse_bus_unlock(pdev);
+		if (ret)
+			return ret;
 	}
 
 	ftdi_i2c_check_eeprom(pdev);
