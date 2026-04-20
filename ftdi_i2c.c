@@ -89,7 +89,6 @@ struct ftdi_i2c {
 	struct platform_device *pdev;
 	struct i2c_adapter adapter;
 	u8 *buf;		/* command assembly buffer */
-	u8 *rsp;		/* response buffer for batched xfers */
 	u8 sda_hi_val;		/* pin value to release SDA */
 	u8 sda_hi_dir;		/* pin direction when SDA released */
 	bool open_drain_hw;	/* FT232H hardware open-drain active */
@@ -356,7 +355,6 @@ static int ftdi_i2c_xfer(struct i2c_adapter *adapter,
 {
 	struct ftdi_i2c *fi2c = i2c_get_adapdata(adapter);
 	u8 *buf = fi2c->buf;
-	u8 *rsp = fi2c->rsp;
 	unsigned int pos;
 	int i, j, ret;
 
@@ -977,10 +975,6 @@ static int ftdi_i2c_probe(struct platform_device *pdev)
 
 	fi2c->buf = devm_kmalloc(&pdev->dev, FTDI_MPSSE_BUF_SIZE, GFP_KERNEL);
 	if (!fi2c->buf)
-		return -ENOMEM;
-
-	fi2c->rsp = devm_kmalloc(&pdev->dev, FTDI_MPSSE_BUF_SIZE, GFP_KERNEL);
-	if (!fi2c->rsp)
 		return -ENOMEM;
 
 	fi2c->pdev = pdev;
