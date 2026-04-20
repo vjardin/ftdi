@@ -238,8 +238,8 @@ static int ftdi_spi_setup(struct spi_device *spi)
 	 */
 	if (spi->mode & SPI_CPHA)
 		dev_notice(&spi->dev,
-			   "SPI mode %u uses CPHA=1; only modes 0 and 2 are fully supported by MPSSE (AN_114)\n",
-			   spi->mode & SPI_MODE_X_MASK);
+			   "SPI mode %lu uses CPHA=1; only modes 0 and 2 are fully supported by MPSSE (AN_114)\n",
+			   (unsigned long)(spi->mode & SPI_MODE_X_MASK));
 
 	if (spi->mode & SPI_CS_HIGH)
 		fspi->cs_active_high |= BIT(cs);
