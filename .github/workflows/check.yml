@@ -1,0 +1,88 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# Copyright (C) 2026 Vincent Jardin <vjardin@free.fr>, Free Mobile
+#
+# Static analysis: checkpatch, sparse, smatch, coccinelle.
+# The kernel source is cloned to /home/runner/linux (outside the
+# workspace) so that coccicheck --dir . only scans FTDI sources.
+
+name: Static Analysis
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    name: checkpatch / sparse / smatch / coccicheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      LINUX_SRC: /home/runner/linux
+      KDIR: ${{ github.workspace }}/tests/.uml-build
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential flex bison bc libelf-dev libssl-dev \
+            sparse coccinelle ocaml perl pkg-config libsqlite3-dev
+
+      - name: Compute cache key
+        id: cache-key
+        run: echo "week=$(date +%Y-W%V)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache kernel source & UML build
+        uses: actions/cache@v4
+        with:
+          path: |
+            /home/runner/linux
+            tests/.uml-build
+          key: kernel-uml-v2-${{ steps.cache-key.outputs.week }}-${{ hashFiles('tests/uml.config') }}
+          restore-keys: |
+            kernel-uml-v2-${{ steps.cache-key.outputs.week }}-
+            kernel-uml-v2-
+
+      - name: Clone Linux kernel
+        run: |
+          if [ ! -d /home/runner/linux/.git ]; then
+            git clone --depth=1 https://github.com/torvalds/linux.git \
+              /home/runner/linux
+          fi
+
+      - name: Build UML kernel (provides KDIR for analysis)
+        run: make -C tests uml-kernel LINUX_SRC=$LINUX_SRC
+
+      - name: Cache smatch
+        uses: actions/cache@v4
+        with:
+          path: /home/runner/smatch
+          key: smatch-${{ runner.os }}-v1
+
+      - name: Build smatch
+        run: |
+          if [ ! -x /home/runner/smatch/smatch ]; then
+            rm -rf /home/runner/smatch
+            git clone --depth=1 https://github.com/error27/smatch.git \
+              /home/runner/smatch
+            make -C /home/runner/smatch -j$(nproc)
+          fi
+
+      - name: checkpatch
+        run: |
+          make checkpatch KDIR=$KDIR \
+            CHECKPATCH=$LINUX_SRC/scripts/checkpatch.pl
+
+      - name: sparse
+        run: make sparse KDIR=$KDIR SPARSE=sparse ARCH=um
+
+      - name: smatch
+        run: |
+          make smatch KDIR=$KDIR \
+            SMATCH=/home/runner/smatch/smatch ARCH=um
+
+      - name: coccicheck
+        timeout-minutes: 15
+        run: make coccicheck KDIR=$KDIR ARCH=um
