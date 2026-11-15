@@ -34,7 +34,9 @@ coccicheck:
 
 tools:
 	$(CC) -Wall -Wextra -o tools/ftdi_eeprom_check tools/ftdi_eeprom_check.c
+	$(MAKE) -C ftdi-emulation
 
 clean:
 	$(MAKE) -C $(KDIR) M=$(CURDIR) $@
 	$(RM) tools/ftdi_eeprom_check
+	$(MAKE) -C ftdi-emulation clean

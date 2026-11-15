@@ -13,3 +13,4 @@
 
 # Userspace tools
 tools/ftdi_eeprom_check
+ftdi-emulation/ftdi_usbip
