@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+[wrap-git]
+url = https://github.com/devttys0/libmpsse.git
+revision = master
+depth = 1
+patch_directory = libmpsse
+
+[provide]
+libmpsse = libmpsse_dep
