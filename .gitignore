@@ -10,3 +10,6 @@
 *.order
 .tmp_versions/
 .cache.mk
+
+# Userspace tools
+tools/ftdi_eeprom_check

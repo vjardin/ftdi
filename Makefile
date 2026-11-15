@@ -9,7 +9,7 @@ CHECKPATCH ?= $(KDIR)/scripts/checkpatch.pl
 SPARSE ?= $(HOME)/bin/sparse
 SMATCH ?= $(HOME)/bin/smatch
 
-.PHONY: all modules modules_install check sparse smatch checkpatch coccicheck clean
+.PHONY: all modules modules_install tools check sparse smatch checkpatch coccicheck clean
 
 all: modules
 
@@ -32,5 +32,9 @@ checkpatch:
 coccicheck:
 	$(MAKE) -C $(KDIR) M=$(CURDIR) coccicheck MODE=report
 
+tools:
+	$(CC) -Wall -Wextra -o tools/ftdi_eeprom_check tools/ftdi_eeprom_check.c
+
 clean:
 	$(MAKE) -C $(KDIR) M=$(CURDIR) $@
+	$(RM) tools/ftdi_eeprom_check
