@@ -2,7 +2,7 @@
 # Copyright (C) 2026 Vincent Jardin <vjardin@free.fr>, Free Mobile
 
 ftdi_mpsse-y := ftdi_mpsse_core.o ftdi_eeprom.o
-obj-m := ftdi_mpsse.o ftdi_uart.o ftdi_spi.o
+obj-m := ftdi_mpsse.o ftdi_uart.o ftdi_spi.o ftdi_i2c.o
 
 KDIR ?= /lib/modules/$(shell uname -r)/build
 CHECKPATCH ?= $(KDIR)/scripts/checkpatch.pl
