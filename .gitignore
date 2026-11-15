@@ -14,3 +14,24 @@
 # Userspace tools
 tools/ftdi_eeprom_check
 ftdi-emulation/ftdi_usbip
+
+# Test infrastructure
+tests/.uml-build/
+tests/.uml-build-debug/
+tests/.uml-build-smp/
+tests/.rootfs/
+tests/ftdi_usbip
+tests/usbip_attach
+tests/error_test
+tests/gpio_test
+tests/hotplug_test
+tests/i2c_test
+tests/rs485_test
+tests/spi_echo_test
+tests/spi_test
+tests/stress_test
+tests/uart_drain_test
+tests/uart_flow_test
+tests/uart_test
+tests/initramfs.cpio.gz
+tests/test*.log
