@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: GPL-2.0-only
+*.o
+*.ko
+*.ko.zst
+*.mod
+*.mod.c
+*.mod.o
+.*.cmd
+*.symvers
+*.order
+.tmp_versions/
+.cache.mk
